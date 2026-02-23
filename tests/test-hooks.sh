@@ -431,6 +431,101 @@ log_pass "Bug #7: validate-readonly BOL redirects"
 echo ""
 
 # ============================================================================
+# Event Emission Tests
+# ============================================================================
+log_test "Testing event emission functions"
+
+# Set up temp events file for emission tests
+ORIG_EVENTS_FILE="${WARDEN_EVENTS_FILE:-}"
+TEST_EVENTS_FILE=$(mktemp /tmp/warden-test-events.XXXXXX)
+export WARDEN_EVENTS_FILE="$TEST_EVENTS_FILE"
+
+# Ensure required globals are set for emission functions
+export WARDEN_SESSION_ID="test-session-emit"
+export WARDEN_TOOL_NAME="Bash"
+export WARDEN_COMMAND="echo hello"
+_WARDEN_NOW_S=$(date +%s)
+_WARDEN_SESSION_START_S=$((_WARDEN_NOW_S - 10))
+
+# Test _warden_emit_block produces valid JSON with session_id
+> "$TEST_EVENTS_FILE"
+_warden_emit_block "test_rule" 500
+EVENT=$(tail -1 "$TEST_EVENTS_FILE" 2>/dev/null || echo "")
+if echo "$EVENT" | jq -e '.event_type == "blocked" and .session_id == "test-session-emit" and .tool == "Bash" and .rule == "test_rule" and .tokens_saved == 500' >/dev/null 2>&1; then
+    log_pass "emit_block: valid JSON with session_id"
+else
+    log_fail "emit_block: valid JSON with session_id (got: $EVENT)"
+fi
+
+# Test _warden_emit_event produces valid JSON with session_id
+> "$TEST_EVENTS_FILE"
+_warden_emit_event "allowed" 1000 800 "test_allow"
+EVENT=$(tail -1 "$TEST_EVENTS_FILE" 2>/dev/null || echo "")
+if echo "$EVENT" | jq -e '.event_type == "allowed" and .session_id == "test-session-emit" and .original_output_bytes == 1000 and .final_output_bytes == 800' >/dev/null 2>&1; then
+    log_pass "emit_event: valid JSON with session_id"
+else
+    log_fail "emit_event: valid JSON with session_id (got: $EVENT)"
+fi
+
+# Test _warden_emit_latency produces valid JSON with session_id
+> "$TEST_EVENTS_FILE"
+_warden_emit_latency "Read" 234 "cat /etc/hosts"
+EVENT=$(tail -1 "$TEST_EVENTS_FILE" 2>/dev/null || echo "")
+if echo "$EVENT" | jq -e '.event_type == "tool_latency" and .session_id == "test-session-emit" and .tool == "Read" and .duration_ms == 234' >/dev/null 2>&1; then
+    log_pass "emit_latency: valid JSON with session_id"
+else
+    log_fail "emit_latency: valid JSON with session_id (got: $EVENT)"
+fi
+
+# Test _warden_emit_output_size produces valid JSON
+> "$TEST_EVENTS_FILE"
+_warden_emit_output_size "Bash" 4500 120 "ls -la"
+EVENT=$(tail -1 "$TEST_EVENTS_FILE" 2>/dev/null || echo "")
+if echo "$EVENT" | jq -e '.event_type == "tool_output_size" and .session_id == "test-session-emit" and .output_bytes == 4500 and .output_lines == 120' >/dev/null 2>&1; then
+    log_pass "emit_output_size: valid JSON with session_id"
+else
+    log_fail "emit_output_size: valid JSON with session_id (got: $EVENT)"
+fi
+
+# Test session-start emits session_start event
+# Hooks re-source common.sh which sets WARDEN_EVENTS_FILE from WARDEN_STATE_DIR,
+# so we redirect via WARDEN_STATE_DIR to capture events in our temp file
+TEST_STATE_DIR=$(mktemp -d /tmp/warden-test-state.XXXXXX)
+cp "$TEST_EVENTS_FILE" "$TEST_STATE_DIR/events.jsonl" 2>/dev/null || touch "$TEST_STATE_DIR/events.jsonl"
+mkdir -p "$HOME/.claude/.session-times"
+export WARDEN_STATE_DIR="$TEST_STATE_DIR"
+export WARDEN_SESSION_BUDGET_DIR="$TEST_STATE_DIR/budgets"
+mkdir -p "$WARDEN_SESSION_BUDGET_DIR"
+INPUT='{"session_id":"test-emit-session"}'
+run_hook "session-start" "$INPUT" >/dev/null
+EVENT=$(grep '"session_start"' "$TEST_STATE_DIR/events.jsonl" 2>/dev/null | tail -1 || echo "")
+if echo "$EVENT" | jq -e '.event_type == "session_start" and .session_id == "test-emit-session"' >/dev/null 2>&1; then
+    log_pass "session-start: emits session_start event"
+else
+    log_fail "session-start: emits session_start event (got: $EVENT)"
+fi
+
+# Test tool-error emits tool_error event
+> "$TEST_STATE_DIR/events.jsonl"
+INPUT='{"tool_name":"Bash","tool_error":"test error message","session_id":"test-emit-session"}'
+run_hook "tool-error" "$INPUT" >/dev/null 2>&1
+EVENT=$(grep '"tool_error"' "$TEST_STATE_DIR/events.jsonl" 2>/dev/null | tail -1 || echo "")
+if echo "$EVENT" | jq -e '.event_type == "tool_error" and .tool == "Bash" and .session_id == "test-emit-session"' >/dev/null 2>&1; then
+    log_pass "tool-error: emits tool_error event"
+else
+    log_fail "tool-error: emits tool_error event (got: $EVENT)"
+fi
+
+# Cleanup integration test state
+rm -rf "$TEST_STATE_DIR"
+
+# Cleanup
+rm -f "$TEST_EVENTS_FILE"
+export WARDEN_EVENTS_FILE="$ORIG_EVENTS_FILE"
+
+echo ""
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo "=========================================="

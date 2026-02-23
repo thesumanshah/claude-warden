@@ -69,7 +69,19 @@ services:
     depends_on:
       - prometheus
 
+  # Tempo (distributed tracing)
+  tempo:
+    image: grafana/tempo:2.7.2
+    container_name: warden-tempo
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./tempo-config.yaml:/etc/tempo.yaml:ro
+      - tempo_data:/var/tempo
+    command: ["-config.file=/etc/tempo.yaml"]
+
 volumes:
   prometheus_data:
   grafana_data:
   loki_data:
+  tempo_data:

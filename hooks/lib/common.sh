@@ -31,6 +31,11 @@ export _WARDEN_SESSION_START_S
 export _WARDEN_NOW_S=$(date +%s)
 export _WARDEN_NOW_NS=$(date +%s.%N)
 
+# Truncation thresholds (tunable via env vars)
+export WARDEN_TRUNCATE_BYTES=${WARDEN_TRUNCATE_BYTES:-20480}           # 20KB generic
+export WARDEN_SUBAGENT_READ_BYTES=${WARDEN_SUBAGENT_READ_BYTES:-10240} # 10KB subagent
+export WARDEN_SUPPRESS_BYTES=${WARDEN_SUPPRESS_BYTES:-524288}          # 500KB suppress
+
 # ==============================================================================
 # INPUT PARSING
 # ==============================================================================
@@ -152,6 +157,30 @@ _warden_get_agent_type() {
 # EVENT EMISSION
 # ==============================================================================
 
+# Scrub potential secrets from command strings
+# Usage: echo "$text" | _warden_scrub_secrets
+_warden_scrub_secrets() {
+    sed -E \
+        's/(-H|--header) +[^ ]+/\1 [REDACTED]/g;
+         s/(Bearer |Authorization: ?)[^ ]+/\1[REDACTED]/gi;
+         s/([a-zA-Z_]*(key|secret|token|password|credential|api_key|database_url|client_id|client_secret|access_token|refresh_token)[a-zA-Z_]*)=[^ ]+/\1=[REDACTED]/gi;
+         s/(ghp_|github_pat_|sk-|gho_|glpat-|xox[bpsa]-)[^ ]+/[REDACTED]/g'
+}
+
+# Scrub secrets from a variable in-place if it looks like it may contain them
+# Usage: _warden_maybe_scrub cmd_safe
+_warden_maybe_scrub() {
+    local -n _ref=$1
+    # Case-insensitive check via shopt (scoped to this function via subshell-free restore)
+    local _prev_nocasematch
+    _prev_nocasematch=$(shopt -p nocasematch 2>/dev/null || true)
+    shopt -s nocasematch
+    if [[ "$_ref" =~ (-H|--header|bearer|authorization|token|key=|secret=|password=|credential=|database_url=|client_id=|client_secret=|access_token=|ghp_|github_pat_|sk-|gho_|glpat-|xox[bpsa]-) ]]; then
+        _ref=$(printf '%s' "$_ref" | _warden_scrub_secrets)
+    fi
+    eval "$_prev_nocasematch" 2>/dev/null || true
+}
+
 # Emit JSONL event for blocked commands (pre-tool-use)
 # Usage: _warden_emit_block RULE TOKENS_SAVED [CMD_OVERRIDE]
 _warden_emit_block() {
@@ -164,21 +193,10 @@ _warden_emit_block() {
     cmd_safe="${cmd_safe//\\/\\\\}"
     cmd_safe="${cmd_safe//\"/\\\"}"
 
-    # Scrub secrets (case-insensitive, extended patterns)
-    local cmd_lower="${cmd_safe,,}"
-    if [[ "$cmd_lower" =~ (-h|--header|bearer|authorization|token|key=|secret=|password=|credential|api_key|apikey|client_secret|access_token|private_key|database_url|gh_token|github_token|anthropic|openai) ]]; then
-        cmd_safe=$(printf '%s' "$cmd_safe" | sed -E \
-            's/(-H|--header) +[^ ]+/\1 [REDACTED]/g;
-             s/([Bb]earer |[Aa]uthorization: ?)[^ ]+/\1[REDACTED]/g;
-             s/([A-Za-z_]*(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|APIKEY|API_KEY|key|secret|token|password|credential|apikey|api_key)[A-Za-z_]*)=[^ ]+/\1=[REDACTED]/g;
-             s/(client_secret|access_token|private_key|database_url|CLIENT_SECRET|ACCESS_TOKEN|PRIVATE_KEY|DATABASE_URL)[=:][^ ]+/\1=[REDACTED]/g;
-             s/(ghp_|gho_|ghu_|ghs_|ghr_)[A-Za-z0-9]+/[REDACTED]/g;
-             s/(sk-[A-Za-z0-9]+)/[REDACTED]/g')
-    fi
+    _warden_maybe_scrub cmd_safe
 
-    local sid="${WARDEN_SESSION_ID:-}"
     printf '{"timestamp":%d,"event_type":"blocked","tool":"%s","session_id":"%s","original_cmd":"%s","rule":"%s","tokens_saved":%d}\n' \
-        "$ts" "${WARDEN_TOOL_NAME:-unknown}" "$sid" "$cmd_safe" "$rule" "$tokens" \
+        "$ts" "${WARDEN_TOOL_NAME:-unknown}" "${WARDEN_SESSION_ID:-}" "$cmd_safe" "$rule" "$tokens" \
         >> "$WARDEN_EVENTS_FILE" 2>/dev/null
 }
 
@@ -193,43 +211,26 @@ _warden_emit_event() {
 
     local ts=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
     local rule_field=""
-    if [[ -n "$rule" ]]; then
-        # Escape rule field same as other strings
-        local rule_safe="${rule//\\/\\\\}"
-        rule_safe="${rule_safe//\"/\\\"}"
-        rule_field="$(printf ',"rule":"%s"' "$rule_safe")"
-    fi
+    [[ -n "$rule" ]] && rule_field="$(printf ',"rule":"%s"' "$rule")"
 
     local cmd_safe="${WARDEN_COMMAND:0:200}"
     cmd_safe="${cmd_safe//$'\n'/ }"
     cmd_safe="${cmd_safe//\\/\\\\}"
     cmd_safe="${cmd_safe//\"/\\\"}"
 
-    # Scrub secrets (case-insensitive, extended patterns)
-    local cmd_lower="${cmd_safe,,}"
-    if [[ "$cmd_lower" =~ (-h|--header|bearer|authorization|token|key=|secret=|password=|credential|api_key|apikey|client_secret|access_token|private_key|database_url|gh_token|github_token|anthropic|openai) ]]; then
-        cmd_safe=$(printf '%s' "$cmd_safe" | sed -E \
-            's/(-H|--header) +[^ ]+/\1 [REDACTED]/g;
-             s/([Bb]earer |[Aa]uthorization: ?)[^ ]+/\1[REDACTED]/g;
-             s/([A-Za-z_]*(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|APIKEY|API_KEY|key|secret|token|password|credential|apikey|api_key)[A-Za-z_]*)=[^ ]+/\1=[REDACTED]/g;
-             s/(client_secret|access_token|private_key|database_url|CLIENT_SECRET|ACCESS_TOKEN|PRIVATE_KEY|DATABASE_URL)[=:][^ ]+/\1=[REDACTED]/g;
-             s/(ghp_|gho_|ghu_|ghs_|ghr_)[A-Za-z0-9]+/[REDACTED]/g;
-             s/(sk-[A-Za-z0-9]+)/[REDACTED]/g')
-    fi
+    _warden_maybe_scrub cmd_safe
 
-    local sid="${WARDEN_SESSION_ID:-}"
     printf '{"timestamp":%d,"event_type":"%s","tool":"%s","session_id":"%s","original_cmd":"%s","tokens_saved":%d,"original_output_bytes":%d,"final_output_bytes":%d%s}\n' \
-        "$ts" "$etype" "${WARDEN_TOOL_NAME:-unknown}" "$sid" "$cmd_safe" "$saved" "$orig_bytes" "$final_bytes" "$rule_field" \
+        "$ts" "$etype" "${WARDEN_TOOL_NAME:-unknown}" "${WARDEN_SESSION_ID:-}" "$cmd_safe" "$saved" "$orig_bytes" "$final_bytes" "$rule_field" \
         >> "$WARDEN_EVENTS_FILE" 2>/dev/null
 }
 
-# Emit JSONL event for tool output size tracking (Phase 1 observability)
+# Emit JSONL event for tool output size tracking
 # Usage: _warden_emit_output_size TOOL_NAME OUTPUT_BYTES OUTPUT_LINES CMD
 _warden_emit_output_size() {
     local tool_name="$1" output_bytes="$2" output_lines="${3:-0}" cmd="${4:-}"
     local ts=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
 
-    # Estimate tokens: ~3.5 bytes per token average
     local estimated_tokens=$(( output_bytes * 10 / 35 ))
 
     local cmd_safe="${cmd:0:200}"
@@ -237,17 +238,7 @@ _warden_emit_output_size() {
     cmd_safe="${cmd_safe//\\/\\\\}"
     cmd_safe="${cmd_safe//\"/\\\"}"
 
-    # Scrub secrets (case-insensitive, extended patterns)
-    local cmd_lower="${cmd_safe,,}"
-    if [[ "$cmd_lower" =~ (-h|--header|bearer|authorization|token|key=|secret=|password=|credential|api_key|apikey|client_secret|access_token|private_key|database_url|gh_token|github_token|anthropic|openai) ]]; then
-        cmd_safe=$(printf '%s' "$cmd_safe" | sed -E \
-            's/(-H|--header) +[^ ]+/\1 [REDACTED]/g;
-             s/([Bb]earer |[Aa]uthorization: ?)[^ ]+/\1[REDACTED]/g;
-             s/([A-Za-z_]*(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|APIKEY|API_KEY|key|secret|token|password|credential|apikey|api_key)[A-Za-z_]*)=[^ ]+/\1=[REDACTED]/g;
-             s/(client_secret|access_token|private_key|database_url|CLIENT_SECRET|ACCESS_TOKEN|PRIVATE_KEY|DATABASE_URL)[=:][^ ]+/\1=[REDACTED]/g;
-             s/(ghp_|gho_|ghu_|ghs_|ghr_)[A-Za-z0-9]+/[REDACTED]/g;
-             s/(sk-[A-Za-z0-9]+)/[REDACTED]/g')
-    fi
+    _warden_maybe_scrub cmd_safe
 
     local sid="${WARDEN_SESSION_ID:-}"
     printf '{"timestamp":%d,"event_type":"tool_output_size","tool":"%s","session_id":"%s","output_bytes":%d,"output_lines":%d,"estimated_tokens":%d,"original_cmd":"%s"}\n' \
@@ -464,21 +455,10 @@ _warden_emit_latency() {
     cmd_safe="${cmd_safe//\\/\\\\}"
     cmd_safe="${cmd_safe//\"/\\\"}"
 
-    # Scrub secrets (case-insensitive, extended patterns)
-    local cmd_lower="${cmd_safe,,}"
-    if [[ "$cmd_lower" =~ (-h|--header|bearer|authorization|token|key=|secret=|password=|credential|api_key|apikey|client_secret|access_token|private_key|database_url|gh_token|github_token|anthropic|openai) ]]; then
-        cmd_safe=$(printf '%s' "$cmd_safe" | sed -E \
-            's/(-H|--header) +[^ ]+/\1 [REDACTED]/g;
-             s/([Bb]earer |[Aa]uthorization: ?)[^ ]+/\1[REDACTED]/g;
-             s/([A-Za-z_]*(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|APIKEY|API_KEY|key|secret|token|password|credential|apikey|api_key)[A-Za-z_]*)=[^ ]+/\1=[REDACTED]/g;
-             s/(client_secret|access_token|private_key|database_url|CLIENT_SECRET|ACCESS_TOKEN|PRIVATE_KEY|DATABASE_URL)[=:][^ ]+/\1=[REDACTED]/g;
-             s/(ghp_|gho_|ghu_|ghs_|ghr_)[A-Za-z0-9]+/[REDACTED]/g;
-             s/(sk-[A-Za-z0-9]+)/[REDACTED]/g')
-    fi
+    _warden_maybe_scrub cmd_safe
 
-    local sid="${WARDEN_SESSION_ID:-}"
     printf '{"timestamp":%d,"event_type":"tool_latency","tool":"%s","session_id":"%s","duration_ms":%d,"original_cmd":"%s","rule":"hook_measured"}\n' \
-        "$ts" "$tool_name" "$sid" "$latency_ms" "$cmd_safe" \
+        "$ts" "$tool_name" "${WARDEN_SESSION_ID:-}" "$latency_ms" "$cmd_safe" \
         >> "$WARDEN_EVENTS_FILE" 2>/dev/null
 }
 
