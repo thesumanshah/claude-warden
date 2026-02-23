@@ -32,10 +32,18 @@ receivers:
             - allowed
             - completed
             - tool_latency
+            - tool_output_size
+            - session_start
+            - session_end
+            - session_stop
+            - subagent_start
+            - subagent_stop
           warn:
             - blocked
             - truncated
             - suppressed
+          error:
+            - tool_error
 
 processors:
   batch:
@@ -71,6 +79,11 @@ exporters:
     tls:
       insecure: true
 
+  otlp/tempo:
+    endpoint: localhost:3205
+    tls:
+      insecure: true
+
   debug:
     verbosity: basic
     sampling_initial: 2
@@ -89,7 +102,7 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, resource, batch]
-      exporters: [debug]
+      exporters: [otlp/tempo, debug]
 
   extensions: []
 

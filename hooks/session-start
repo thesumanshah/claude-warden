@@ -34,6 +34,11 @@ if [ -n "$SESSION_ID" ]; then
 
   # Log terminal agent start
   echo "$(date -Iseconds),terminal-$SESSION_ID,terminal,main,0,$SESSION_ID,started" >> "$AGENT_STATS"
+
+  # Emit session_start event to events.jsonl for Loki/Grafana
+  printf '{"timestamp":0,"event_type":"session_start","tool":"SessionStart","session_id":"%s"}\n' \
+    "$SESSION_ID" \
+    >> "$WARDEN_EVENTS_FILE" 2>/dev/null
 fi
 
 exit 0

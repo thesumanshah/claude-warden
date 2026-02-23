@@ -183,8 +183,8 @@ _warden_emit_block() {
         cmd_safe=$(printf '%s' "$cmd_safe" | _warden_scrub_secrets)
     fi
 
-    printf '{"timestamp":%d,"event_type":"blocked","tool":"%s","original_cmd":"%s","rule":"%s","tokens_saved":%d}\n' \
-        "$ts" "${WARDEN_TOOL_NAME:-unknown}" "$cmd_safe" "$rule" "$tokens" \
+    printf '{"timestamp":%d,"event_type":"blocked","tool":"%s","session_id":"%s","original_cmd":"%s","rule":"%s","tokens_saved":%d}\n' \
+        "$ts" "${WARDEN_TOOL_NAME:-unknown}" "${WARDEN_SESSION_ID:-}" "$cmd_safe" "$rule" "$tokens" \
         >> "$WARDEN_EVENTS_FILE" 2>/dev/null
 }
 
@@ -211,8 +211,8 @@ _warden_emit_event() {
         cmd_safe=$(printf '%s' "$cmd_safe" | _warden_scrub_secrets)
     fi
 
-    printf '{"timestamp":%d,"event_type":"%s","tool":"%s","original_cmd":"%s","tokens_saved":%d,"original_output_bytes":%d,"final_output_bytes":%d%s}\n' \
-        "$ts" "$etype" "${WARDEN_TOOL_NAME:-unknown}" "$cmd_safe" "$saved" "$orig_bytes" "$final_bytes" "$rule_field" \
+    printf '{"timestamp":%d,"event_type":"%s","tool":"%s","session_id":"%s","original_cmd":"%s","tokens_saved":%d,"original_output_bytes":%d,"final_output_bytes":%d%s}\n' \
+        "$ts" "$etype" "${WARDEN_TOOL_NAME:-unknown}" "${WARDEN_SESSION_ID:-}" "$cmd_safe" "$saved" "$orig_bytes" "$final_bytes" "$rule_field" \
         >> "$WARDEN_EVENTS_FILE" 2>/dev/null
 }
 
@@ -448,8 +448,13 @@ _warden_emit_latency() {
     cmd_safe="${cmd_safe//\\/\\\\}"
     cmd_safe="${cmd_safe//\"/\\\"}"
 
-    printf '{"timestamp":%d,"event_type":"tool_latency","tool":"%s","duration_ms":%d,"original_cmd":"%s","rule":"hook_measured"}\n' \
-        "$ts" "$tool_name" "$latency_ms" "$cmd_safe" \
+    # Scrub potential secrets
+    if [[ "$cmd_safe" =~ (-H|--header|Bearer|Authorization|token|_KEY=|_SECRET=|_TOKEN=|PASSWORD=|CREDENTIAL) ]]; then
+        cmd_safe=$(printf '%s' "$cmd_safe" | _warden_scrub_secrets)
+    fi
+
+    printf '{"timestamp":%d,"event_type":"tool_latency","tool":"%s","session_id":"%s","duration_ms":%d,"original_cmd":"%s","rule":"hook_measured"}\n' \
+        "$ts" "$tool_name" "${WARDEN_SESSION_ID:-}" "$latency_ms" "$cmd_safe" \
         >> "$WARDEN_EVENTS_FILE" 2>/dev/null
 }
 

@@ -423,7 +423,7 @@
               "timestamp": true,
               "event_type": true,
               "service_name": true,
-              "tool": true
+              "tool_name": true
             },
             "indexByName": {
               "Time": 0,

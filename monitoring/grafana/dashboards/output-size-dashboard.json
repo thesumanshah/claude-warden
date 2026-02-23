@@ -390,7 +390,7 @@
               "timestamp": true,
               "event_type": true,
               "service_name": true,
-              "tool": true,
+              "tool_name": true,
               "session_id": true
             },
             "indexByName": {
@@ -552,7 +552,7 @@
               "timestamp": true,
               "event_type": true,
               "service_name": true,
-              "tool": true,
+              "tool_name": true,
               "session_id": true,
               "output_bytes": true,
               "estimated_tokens": true

@@ -127,6 +127,18 @@
           }
         ]
       }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/pre-compact",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   },
   "statusLine": {

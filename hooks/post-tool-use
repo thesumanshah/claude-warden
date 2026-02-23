@@ -226,10 +226,12 @@ if [[ "$TOOL_NAME" == "Task" ]] && (( OUTPUT_SIZE > 6144 )); then
 fi
 
 # Fast path: small outputs (subagent Reads use tighter 10KB threshold)
+# Clamp to suppress threshold so oversized outputs can't bypass suppression
 TRUNCATION_THRESHOLD=$WARDEN_TRUNCATE_BYTES
 if [[ "$IS_SUBAGENT" == true && "$TOOL_NAME" == "Read" ]]; then
     TRUNCATION_THRESHOLD=$WARDEN_SUBAGENT_READ_BYTES
 fi
+(( TRUNCATION_THRESHOLD > WARDEN_SUPPRESS_BYTES )) && TRUNCATION_THRESHOLD=$WARDEN_SUPPRESS_BYTES
 (( OUTPUT_SIZE <= TRUNCATION_THRESHOLD )) && { _warden_emit_event "allowed" "$OUTPUT_SIZE" "$OUTPUT_SIZE"; _exit_clean_or_suppress; }
 
 # Need actual output content for truncation - extract only when needed

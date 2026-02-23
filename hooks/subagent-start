@@ -95,6 +95,13 @@ if [ ! -f "$AGENT_STATS" ]; then
 fi
 echo "$(date -Iseconds),$AGENT_ID,subagent,$AGENT_TYPE,0,$SESSION_ID,started" >> "$AGENT_STATS"
 
+# Emit subagent_start event to events.jsonl for Loki/Grafana
+_TS=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
+_AT_SAFE="${AGENT_TYPE//\"/\\\"}"
+printf '{"timestamp":%d,"event_type":"subagent_start","tool":"SubagentStart","session_id":"%s","agent_id":"%s","agent_type":"%s"}\n' \
+  "$_TS" "$SESSION_ID" "$AGENT_ID" "$_AT_SAFE" \
+  >> "$WARDEN_EVENTS_FILE" 2>/dev/null
+
 # Track active subagent count per session (with cross-platform locking)
 if [ -n "$SESSION_ID" ]; then
   _increment_count() {

@@ -1,0 +1,103 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: claude-warden-alerts
+    folder: Claude Code
+    interval: 1m
+    rules:
+      # Alert: Sustained high tool latency (>5s for 3+ events in 5min)
+      - uid: warden-high-latency
+        title: Sustained tool latency
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: loki-claude-warden
+            model:
+              expr: 'count_over_time({service_name="claude-code"} | json | event_type="tool_latency" | duration_ms > 5000 [5m])'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [3]
+              refId: C
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} tool calls exceeded 5s latency in the last 5 minutes"
+
+      # Alert: Tool error spike (>3 errors in 5min)
+      - uid: warden-error-spike
+        title: Tool error spike
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: loki-claude-warden
+            model:
+              expr: 'count_over_time({service_name="claude-code"} | json | event_type="tool_error" [5m])'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [3]
+              refId: C
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} tool errors in the last 5 minutes"
+
+      # Alert: High block rate (>10 blocks in 5min)
+      - uid: warden-high-block-rate
+        title: High tool block rate
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: loki-claude-warden
+            model:
+              expr: 'count_over_time({service_name="claude-code"} | json | event_type="blocked" [5m])'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [10]
+              refId: C
+        for: 0s
+        labels:
+          severity: info
+        annotations:
+          summary: "{{ $value }} tool calls blocked in the last 5 minutes"

@@ -20,3 +20,19 @@ datasources:
     editable: true
     jsonData:
       maxLines: 1000
+      derivedFields:
+        - name: TraceID
+          datasourceUid: tempo-claude-warden
+          matcherRegex: '"trace_id":"(\w+)"'
+          url: "$${__value.raw}"
+
+  - name: Tempo
+    type: tempo
+    uid: tempo-claude-warden
+    access: proxy
+    url: http://localhost:3200
+    editable: true
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: loki-claude-warden
+        filterByTraceID: true

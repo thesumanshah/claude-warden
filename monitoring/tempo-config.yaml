@@ -1,0 +1,30 @@
+stream_over_http_enabled: true
+
+server:
+  http_listen_port: 3200
+  grpc_listen_port: 9096
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:3205
+        http:
+          endpoint: 0.0.0.0:3206
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/traces
+    wal:
+      path: /var/tempo/wal
+
+compactor:
+  compaction:
+    block_retention: 720h  # 30 days (match Loki)
+
+metrics_generator:
+  storage:
+    path: /var/tempo/generator/wal
