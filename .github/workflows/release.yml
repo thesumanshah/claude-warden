@@ -17,9 +17,6 @@ jobs:
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Run tests
-        run: bash tests/run.sh
-
       - name: Validate and set tag name
         id: tag
         run: |
@@ -30,15 +27,35 @@ jobs:
           fi
           echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
 
+      - name: Validate VERSION matches tag
+        run: |
+          TAG="${{ steps.tag.outputs.TAG }}"
+          FILE_VERSION=$(head -1 VERSION | tr -d '[:space:]')
+          if [[ "v$FILE_VERSION" != "$TAG" ]]; then
+            echo "::error::VERSION file ($FILE_VERSION) does not match tag ($TAG)"
+            exit 1
+          fi
+
+      - name: Check script syntax
+        run: |
+          bash -n install.sh
+          bash -n install-remote.sh
+          bash -n uninstall.sh
+
+      - name: Run tests
+        run: bash tests/run.sh
+
       - name: Create tarball and checksum
         run: |
           TAG="${{ steps.tag.outputs.TAG }}"
           tar czf "claude-warden-${TAG}.tar.gz" \
+            --owner=0 --group=0 --numeric-owner \
             --exclude='.git' \
             --exclude='demo' \
             --exclude='assets' \
             --exclude='.github' \
             --exclude='monitoring' \
+            --exclude='tests' \
             --exclude='__pycache__' \
             --exclude='*.pyc' \
             .

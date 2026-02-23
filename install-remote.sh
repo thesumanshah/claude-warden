@@ -9,10 +9,10 @@
 set -euo pipefail
 
 REPO="johnzfitch/claude-warden"
-TMPDIR=""
+WARDEN_TMPDIR=""
 MAX_TARBALL_BYTES=$((50 * 1024 * 1024))  # 50 MB
 
-cleanup() { [[ -n "$TMPDIR" && -d "$TMPDIR" ]] && rm -rf "$TMPDIR"; }
+cleanup() { [[ -n "$WARDEN_TMPDIR" && -d "$WARDEN_TMPDIR" ]] && rm -rf "$WARDEN_TMPDIR"; }
 trap cleanup EXIT
 
 # === Colors ===
@@ -72,11 +72,12 @@ if [[ -z "$VERSION" ]]; then
         exit 1
     }
     if command -v jq &>/dev/null; then
-        VERSION=$(printf '%s' "$RELEASE_JSON" | jq -r '.tag_name')
+        VERSION=$(printf '%s' "$RELEASE_JSON" | jq -r '.tag_name // empty')
     else
+        # Fallback: grep/sed parsing (jq strongly recommended)
         VERSION=$(printf '%s' "$RELEASE_JSON" \
             | grep '"tag_name"' | head -1 \
-            | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+            | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/') || true
     fi
     if [[ -z "$VERSION" || "$VERSION" == "null" ]]; then
         error "Could not determine latest release. Specify a version: bash install-remote.sh v0.2.0"
@@ -88,8 +89,8 @@ validate_version "$VERSION"
 info "Version: $VERSION"
 
 # === Download tarball ===
-TMPDIR=$(mktemp -d) || { error "Failed to create temporary directory."; exit 1; }
-TARBALL="$TMPDIR/claude-warden-${VERSION}.tar.gz"
+WARDEN_TMPDIR=$(mktemp -d) || { error "Failed to create temporary directory."; exit 1; }
+TARBALL="$WARDEN_TMPDIR/claude-warden-${VERSION}.tar.gz"
 TARBALL_URL="https://github.com/$REPO/releases/download/$VERSION/claude-warden-${VERSION}.tar.gz"
 
 info "Downloading $TARBALL_URL"
@@ -109,7 +110,7 @@ fi
 
 # === Verify checksum ===
 CHECKSUM_URL="https://github.com/$REPO/releases/download/$VERSION/claude-warden-${VERSION}.tar.gz.sha256"
-CHECKSUM_FILE="$TMPDIR/checksum.sha256"
+CHECKSUM_FILE="$WARDEN_TMPDIR/checksum.sha256"
 
 if fetch_to "$CHECKSUM_URL" "$CHECKSUM_FILE" 2>/dev/null && [[ -s "$CHECKSUM_FILE" ]]; then
     info "Verifying SHA256 checksum..."
@@ -119,8 +120,9 @@ if fetch_to "$CHECKSUM_URL" "$CHECKSUM_FILE" 2>/dev/null && [[ -s "$CHECKSUM_FIL
     elif command -v shasum &>/dev/null; then
         ACTUAL=$(shasum -a 256 "$TARBALL" | awk '{print $1}')
     else
-        warn "No sha256sum or shasum found, skipping checksum verification."
-        ACTUAL="$EXPECTED"
+        error "No sha256sum or shasum found. Cannot verify tarball integrity."
+        error "  Linux: apt install coreutils   macOS: shasum is built-in"
+        exit 1
     fi
     if [[ "$EXPECTED" != "$ACTUAL" ]]; then
         error "Checksum mismatch! Expected: $EXPECTED Got: $ACTUAL"
@@ -132,26 +134,41 @@ else
     warn "No checksum file found for this release, skipping verification."
 fi
 
-# === Validate tarball contents (path traversal, file count) ===
-if tar tzf "$TARBALL" | grep -qE '(^/|\.\.)'; then
+# === Validate tarball contents ===
+TARBALL_LISTING=$(tar tzf "$TARBALL")
+
+# Path traversal: absolute paths, ../ anywhere in path
+if printf '%s' "$TARBALL_LISTING" | grep -qE '(^/|/\.\./|^\.\./|/\.\.$|^\.\.$)'; then
     error "Tarball contains absolute or parent-traversal paths. Aborting."
     exit 1
 fi
 
-FILE_COUNT=$(tar tzf "$TARBALL" | wc -l)
+# File count
+FILE_COUNT=$(printf '%s' "$TARBALL_LISTING" | wc -l)
 if (( FILE_COUNT > 1000 )); then
     error "Tarball contains $FILE_COUNT entries (limit: 1000). Aborting."
     exit 1
 fi
 
+# Symlink detection: tar tvzf shows "-> target" for symlinks
+if tar tvzf "$TARBALL" | grep -qE ' -> '; then
+    error "Tarball contains symlinks. Aborting for security."
+    exit 1
+fi
+
 # === Extract ===
-EXTRACT_DIR="$TMPDIR/claude-warden"
+EXTRACT_DIR="$WARDEN_TMPDIR/claude-warden"
 mkdir -p "$EXTRACT_DIR"
 tar xzf "$TARBALL" -C "$EXTRACT_DIR"
 
-# === Run install.sh ===
+# === Validate install.sh before executing ===
 if [[ ! -f "$EXTRACT_DIR/install.sh" ]]; then
     error "install.sh not found in tarball. The release may be malformed."
+    exit 1
+fi
+
+if ! head -1 "$EXTRACT_DIR/install.sh" | grep -q '^#!/.*bash'; then
+    error "install.sh does not appear to be a bash script. Aborting."
     exit 1
 fi
 
