@@ -162,8 +162,23 @@ _warden_get_agent_type() {
 _warden_scrub_secrets() {
     sed -E \
         's/(-H|--header) +[^ ]+/\1 [REDACTED]/g;
-         s/(Bearer |Authorization: ?)[^ ]+/\1[REDACTED]/g;
-         s/([A-Z_]*(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[A-Z_]*)=[^ ]+/\1=[REDACTED]/g'
+         s/(Bearer |Authorization: ?)[^ ]+/\1[REDACTED]/gi;
+         s/([a-zA-Z_]*(key|secret|token|password|credential|api_key|database_url|client_id|client_secret|access_token|refresh_token)[a-zA-Z_]*)=[^ ]+/\1=[REDACTED]/gi;
+         s/(ghp_|github_pat_|sk-|gho_|glpat-|xox[bpsa]-)[^ ]+/[REDACTED]/g'
+}
+
+# Scrub secrets from a variable in-place if it looks like it may contain them
+# Usage: _warden_maybe_scrub cmd_safe
+_warden_maybe_scrub() {
+    local -n _ref=$1
+    # Case-insensitive check via shopt (scoped to this function via subshell-free restore)
+    local _prev_nocasematch
+    _prev_nocasematch=$(shopt -p nocasematch 2>/dev/null || true)
+    shopt -s nocasematch
+    if [[ "$_ref" =~ (-H|--header|bearer|authorization|token|key=|secret=|password=|credential=|database_url=|client_id=|client_secret=|access_token=|ghp_|github_pat_|sk-|gho_|glpat-|xox[bpsa]-) ]]; then
+        _ref=$(printf '%s' "$_ref" | _warden_scrub_secrets)
+    fi
+    eval "$_prev_nocasematch" 2>/dev/null || true
 }
 
 # Emit JSONL event for blocked commands (pre-tool-use)
@@ -178,10 +193,7 @@ _warden_emit_block() {
     cmd_safe="${cmd_safe//\\/\\\\}"
     cmd_safe="${cmd_safe//\"/\\\"}"
 
-    # Scrub potential secrets
-    if [[ "$cmd_safe" =~ (-H|--header|Bearer|Authorization|token|_KEY=|_SECRET=|_TOKEN=|PASSWORD=|CREDENTIAL) ]]; then
-        cmd_safe=$(printf '%s' "$cmd_safe" | _warden_scrub_secrets)
-    fi
+    _warden_maybe_scrub cmd_safe
 
     printf '{"timestamp":%d,"event_type":"blocked","tool":"%s","session_id":"%s","original_cmd":"%s","rule":"%s","tokens_saved":%d}\n' \
         "$ts" "${WARDEN_TOOL_NAME:-unknown}" "${WARDEN_SESSION_ID:-}" "$cmd_safe" "$rule" "$tokens" \
@@ -206,10 +218,7 @@ _warden_emit_event() {
     cmd_safe="${cmd_safe//\\/\\\\}"
     cmd_safe="${cmd_safe//\"/\\\"}"
 
-    # Scrub secrets
-    if [[ "$cmd_safe" =~ (-H|--header|Bearer|Authorization|token|_KEY=|_SECRET=|_TOKEN=|PASSWORD=|CREDENTIAL) ]]; then
-        cmd_safe=$(printf '%s' "$cmd_safe" | _warden_scrub_secrets)
-    fi
+    _warden_maybe_scrub cmd_safe
 
     printf '{"timestamp":%d,"event_type":"%s","tool":"%s","session_id":"%s","original_cmd":"%s","tokens_saved":%d,"original_output_bytes":%d,"final_output_bytes":%d%s}\n' \
         "$ts" "$etype" "${WARDEN_TOOL_NAME:-unknown}" "${WARDEN_SESSION_ID:-}" "$cmd_safe" "$saved" "$orig_bytes" "$final_bytes" "$rule_field" \
@@ -229,9 +238,7 @@ _warden_emit_output_size() {
     cmd_safe="${cmd_safe//\\/\\\\}"
     cmd_safe="${cmd_safe//\"/\\\"}"
 
-    if [[ "$cmd_safe" =~ (-H|--header|Bearer|Authorization|token|_KEY=|_SECRET=|_TOKEN=|PASSWORD=|CREDENTIAL) ]]; then
-        cmd_safe=$(printf '%s' "$cmd_safe" | _warden_scrub_secrets)
-    fi
+    _warden_maybe_scrub cmd_safe
 
     local sid="${WARDEN_SESSION_ID:-}"
     printf '{"timestamp":%d,"event_type":"tool_output_size","tool":"%s","session_id":"%s","output_bytes":%d,"output_lines":%d,"estimated_tokens":%d,"original_cmd":"%s"}\n' \
@@ -448,10 +455,7 @@ _warden_emit_latency() {
     cmd_safe="${cmd_safe//\\/\\\\}"
     cmd_safe="${cmd_safe//\"/\\\"}"
 
-    # Scrub potential secrets
-    if [[ "$cmd_safe" =~ (-H|--header|Bearer|Authorization|token|_KEY=|_SECRET=|_TOKEN=|PASSWORD=|CREDENTIAL) ]]; then
-        cmd_safe=$(printf '%s' "$cmd_safe" | _warden_scrub_secrets)
-    fi
+    _warden_maybe_scrub cmd_safe
 
     printf '{"timestamp":%d,"event_type":"tool_latency","tool":"%s","session_id":"%s","duration_ms":%d,"original_cmd":"%s","rule":"hook_measured"}\n' \
         "$ts" "$tool_name" "${WARDEN_SESSION_ID:-}" "$latency_ms" "$cmd_safe" \
