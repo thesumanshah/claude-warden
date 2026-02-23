@@ -1,0 +1,43 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: Run tests
+        run: bash tests/run.sh
+
+      - name: Set tag name
+        id: tag
+        run: echo "TAG=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - name: Create tarball
+        run: |
+          tar czf "claude-warden-${{ steps.tag.outputs.TAG }}.tar.gz" \
+            --exclude='.git' \
+            --exclude='demo' \
+            --exclude='assets' \
+            --exclude='.github' \
+            .
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.tag.outputs.TAG }}" \
+            "claude-warden-${{ steps.tag.outputs.TAG }}.tar.gz" \
+            --generate-notes \
+            --title "${{ steps.tag.outputs.TAG }}"
