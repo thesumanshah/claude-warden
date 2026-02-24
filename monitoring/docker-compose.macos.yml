@@ -24,6 +24,8 @@ services:
       - "4317:4317"
       - "4318:4318"
       - "8889:8889"
+    volumes:
+      - ./otel-collector-config.macos.yaml:/etc/otelcol-contrib/config.yaml:ro
 
   prometheus:
     network_mode: ""
@@ -31,6 +33,8 @@ services:
       - warden
     ports:
       - "9090:9090"
+    volumes:
+      - ./prometheus.macos.yml:/etc/prometheus/prometheus.yml:ro
 
   node-exporter:
     network_mode: ""
@@ -45,6 +49,8 @@ services:
       - warden
     ports:
       - "3000:3000"
+    volumes:
+      - ./grafana/provisioning/datasources/datasources.macos.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
 
   tempo:
     network_mode: ""
