@@ -1,0 +1,77 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Validate and set tag name
+        id: tag
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9._-]+)?$ ]]; then
+            echo "::error::Invalid tag format: $TAG (expected vX.Y.Z)" >&2
+            exit 1
+          fi
+          echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Validate VERSION matches tag
+        run: |
+          TAG="${{ steps.tag.outputs.TAG }}"
+          FILE_VERSION=$(head -1 VERSION | tr -d '[:space:]')
+          if [[ "v$FILE_VERSION" != "$TAG" ]]; then
+            echo "::error::VERSION file ($FILE_VERSION) does not match tag ($TAG)"
+            exit 1
+          fi
+
+      - name: Check script syntax
+        run: |
+          bash -n install.sh
+          bash -n install-remote.sh
+          bash -n uninstall.sh
+
+      - name: Run tests
+        run: bash tests/run.sh
+
+      - name: Create tarball and checksum
+        run: |
+          TAG="${{ steps.tag.outputs.TAG }}"
+          tar czf "claude-warden-${TAG}.tar.gz" \
+            --owner=0 --group=0 --numeric-owner \
+            --exclude='.git' \
+            --exclude='demo' \
+            --exclude='assets' \
+            --exclude='.github' \
+            --exclude='monitoring' \
+            --exclude='tests' \
+            --exclude='__pycache__' \
+            --exclude='*.pyc' \
+            .
+          sha256sum "claude-warden-${TAG}.tar.gz" > "claude-warden-${TAG}.tar.gz.sha256"
+          echo "Tarball:"
+          ls -lh "claude-warden-${TAG}.tar.gz"
+          echo "Checksum:"
+          cat "claude-warden-${TAG}.tar.gz.sha256"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.tag.outputs.TAG }}"
+          gh release create "$TAG" \
+            "claude-warden-${TAG}.tar.gz" \
+            "claude-warden-${TAG}.tar.gz.sha256" \
+            --generate-notes \
+            --title "$TAG"

@@ -66,6 +66,14 @@ PreToolUse ──> [tool executes] ──> PostToolUse
 
 ## Install
 
+### Quick install (latest release)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/johnzfitch/claude-warden/master/install-remote.sh | bash
+```
+
+### Install from source (development)
+
 ```bash
 git clone https://github.com/johnzfitch/claude-warden.git ~/dev/claude-warden
 cd ~/dev/claude-warden

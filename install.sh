@@ -15,6 +15,9 @@ HOOKS_DIR="$CLAUDE_DIR/hooks"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 TEMPLATE_FILE="$WARDEN_DIR/settings.hooks.json"
 
+WARDEN_VERSION="unknown"
+[[ -f "$WARDEN_DIR/VERSION" ]] && WARDEN_VERSION=$(head -1 "$WARDEN_DIR/VERSION" | tr -d '[:space:]')
+
 MODE="symlink"
 DRY_RUN=false
 
@@ -285,8 +288,9 @@ if (( ERRORS > 0 )); then
     exit 1
 fi
 
-info "Installation complete!"
+info "Installation complete! (v$WARDEN_VERSION)"
 echo ""
+echo "  Version:    $WARDEN_VERSION"
 echo "  Hooks:      $HOOKS_DIR/ (${#HOOK_FILES[@]} hooks + lib, $MODE mode)"
 echo "  Statusline: $STATUSLINE_DST"
 echo "  Settings:   $SETTINGS_FILE"
