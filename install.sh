@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# install.sh - Install claude-warden hooks into ~/.claude/
+# install.sh - Install claude-warden hooks + configuration into ~/.claude/
 #
 # Usage:
-#   ./install.sh           # Symlink mode (default, edits take effect immediately)
-#   ./install.sh --copy    # Copy mode (decoupled from repo)
-#   ./install.sh --dry-run # Show what would be done without making changes
+#   ./install.sh                       # Interactive profile selection (default)
+#   ./install.sh --profile standard    # Use a specific profile
+#   ./install.sh --copy                # Copy mode (decoupled from repo)
+#   ./install.sh --dry-run             # Show what would be done
+#   ./install.sh --profile minimal     # Hooks only, no env/permission changes
 
 set -euo pipefail
 
@@ -13,37 +15,64 @@ WARDEN_DIR="$(cd "$(dirname "$0")" && pwd)"
 CLAUDE_DIR="$HOME/.claude"
 HOOKS_DIR="$CLAUDE_DIR/hooks"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
-TEMPLATE_FILE="$WARDEN_DIR/settings.hooks.json"
+HOOKS_TEMPLATE="$WARDEN_DIR/settings.hooks.json"
+CONFIG_DIR="$WARDEN_DIR/config"
+WARDEN_ENV_DIR="$CLAUDE_DIR/.warden"
 
 WARDEN_VERSION="unknown"
 [[ -f "$WARDEN_DIR/VERSION" ]] && WARDEN_VERSION=$(head -1 "$WARDEN_DIR/VERSION" | tr -d '[:space:]')
 
 MODE="symlink"
 DRY_RUN=false
+PROFILE=""
 
 for arg in "$@"; do
     case "$arg" in
         --copy) MODE="copy" ;;
         --dry-run) DRY_RUN=true ;;
+        --profile=*) PROFILE="${arg#--profile=}" ;;
+        --profile)
+            # Next arg is the profile name (handled below)
+            _NEXT_IS_PROFILE=true
+            continue
+            ;;
         --help|-h)
-            echo "Usage: $0 [--copy] [--dry-run]"
+            echo "Usage: $0 [--copy] [--dry-run] [--profile NAME]"
             echo ""
             echo "Options:"
-            echo "  --copy     Copy files instead of symlinking (default: symlink)"
-            echo "  --dry-run  Show what would be done without making changes"
+            echo "  --copy            Copy files instead of symlinking (default: symlink)"
+            echo "  --dry-run         Show what would be done without making changes"
+            echo "  --profile NAME    Use a configuration profile:"
+            echo "                      minimal   - Hooks only (no env/permission changes)"
+            echo "                      standard  - Token limits + OTEL + safe permissions"
+            echo "                      strict    - Aggressive limits, tight budgets"
             echo ""
-            echo "Symlink mode: edits to the repo take effect immediately."
-            echo "Copy mode: files are independent of the repo after install."
+            echo "If --profile is not specified, you'll be prompted to choose."
             exit 0
             ;;
-        *) echo "Unknown option: $arg. Use --help for usage." >&2; exit 1 ;;
+        *)
+            if [[ "${_NEXT_IS_PROFILE:-}" == true ]]; then
+                PROFILE="$arg"
+                _NEXT_IS_PROFILE=""
+            else
+                echo "Unknown option: $arg. Use --help for usage." >&2; exit 1
+            fi
+            ;;
     esac
 done
+
+# Validate --profile was given a value if the flag was used
+if [[ "${_NEXT_IS_PROFILE:-}" == true ]]; then
+    echo "Error: --profile requires a value (minimal, standard, strict)" >&2
+    exit 1
+fi
 
 # === Colors ===
 RED='\033[31m'
 GREEN='\033[32m'
 YELLOW='\033[33m'
+CYAN='\033[36m'
+BOLD='\033[1m'
 DIM='\033[2m'
 RESET='\033[0m'
 
@@ -99,7 +128,97 @@ case "$(uname -s)" in
 esac
 info "Platform: $PLATFORM"
 
-# === Backup existing hooks ===
+# === Profile selection ===
+AVAILABLE_PROFILES=()
+for pf in "$CONFIG_DIR/profiles"/*.json; do
+    [[ -f "$pf" ]] || continue
+    AVAILABLE_PROFILES+=("$(basename "$pf" .json)")
+done
+
+if [[ -z "$PROFILE" ]]; then
+    echo ""
+    printf "${BOLD}Choose a configuration profile:${RESET}\n"
+    echo ""
+    printf "  ${CYAN}1)${RESET} ${BOLD}minimal${RESET}   - Hooks only (no env or permission changes)\n"
+    printf "  ${CYAN}2)${RESET} ${BOLD}standard${RESET}  - Token limits + OTEL + safe tool permissions ${GREEN}(recommended)${RESET}\n"
+    printf "  ${CYAN}3)${RESET} ${BOLD}strict${RESET}    - Aggressive limits, tight subagent budgets\n"
+    echo ""
+    printf "  Enter 1-3 or profile name [standard]: "
+    read -r CHOICE
+    case "${CHOICE:-2}" in
+        1|minimal)  PROFILE="minimal" ;;
+        2|standard) PROFILE="standard" ;;
+        3|strict)   PROFILE="strict" ;;
+        *) PROFILE="$CHOICE" ;;
+    esac
+fi
+
+PROFILE_FILE="$CONFIG_DIR/profiles/$PROFILE.json"
+if [[ ! -f "$PROFILE_FILE" ]]; then
+    error "Profile not found: $PROFILE"
+    echo "  Available: ${AVAILABLE_PROFILES[*]}"
+    exit 1
+fi
+info "Profile: $PROFILE"
+
+# === Build merged warden config ===
+# Merge order: defaults < profile < user overrides
+# - env: shallow merge (last value wins)
+# - permissions.allow/deny: array union (unique)
+# - warden: shallow merge (last value wins per key, deep merge for nested objects)
+info "Building configuration..."
+
+DEFAULTS_FILE="$CONFIG_DIR/defaults.json"
+USER_FILE="$CONFIG_DIR/user.json"
+
+# Build jq input array: always defaults + profile, optionally user
+MERGE_FILES=("$DEFAULTS_FILE" "$PROFILE_FILE")
+if [[ -f "$USER_FILE" ]]; then
+    MERGE_FILES+=("$USER_FILE")
+    dim "Merging: defaults + $PROFILE + user overrides"
+else
+    dim "Merging: defaults + $PROFILE (no user.json found)"
+fi
+
+WARDEN_MERGED=$(jq -s '
+  def deepmerge_obj:
+    reduce .[] as $item ({};
+      . as $base |
+      $item | to_entries | reduce .[] as $e ($base;
+        if ($e.value | type) == "object" and (.[$e.key] | type) == "object"
+        then .[$e.key] = ([.[$e.key], $e.value] | deepmerge_obj)
+        else .[$e.key] = $e.value
+        end
+      )
+    );
+
+  # Extract sections
+  (map(.env // {}) | deepmerge_obj) as $env |
+  (map(.permissions.allow // []) | add | unique) as $allow |
+  (map(.permissions.deny // []) | add | unique) as $deny |
+  (map(.warden // {}) | deepmerge_obj) as $warden |
+
+  {
+    env: $env,
+    permissions: { allow: $allow, deny: $deny },
+    warden: $warden
+  }
+' "${MERGE_FILES[@]}")
+
+# Remove _comment fields from merged config
+WARDEN_MERGED=$(printf '%s' "$WARDEN_MERGED" | jq 'del(._comment) | .env |= del(._comment) | .warden |= del(._comment)')
+
+# Extract sections for use below
+WARDEN_ENV_JSON=$(printf '%s' "$WARDEN_MERGED" | jq '.env')
+WARDEN_ALLOW_JSON=$(printf '%s' "$WARDEN_MERGED" | jq '.permissions.allow')
+WARDEN_DENY_JSON=$(printf '%s' "$WARDEN_MERGED" | jq '.permissions.deny')
+WARDEN_THRESHOLDS_JSON=$(printf '%s' "$WARDEN_MERGED" | jq '.warden')
+
+ENV_COUNT=$(printf '%s' "$WARDEN_ENV_JSON" | jq 'length')
+ALLOW_COUNT=$(printf '%s' "$WARDEN_ALLOW_JSON" | jq 'length')
+dim "$ENV_COUNT env vars, $ALLOW_COUNT permission rules"
+
+# === Backup ===
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 
 if [[ -d "$HOOKS_DIR" ]] && [[ "$(ls -A "$HOOKS_DIR" 2>/dev/null)" ]]; then
@@ -142,7 +261,6 @@ for hook in "${HOOK_FILES[@]}"; do
         continue
     fi
 
-    # Remove existing file/symlink
     if [[ -e "$DST" ]] || [[ -L "$DST" ]]; then
         run rm -f "$DST"
     fi
@@ -197,31 +315,163 @@ if ! $DRY_RUN; then
     [[ -f "$STATUSLINE_DST" ]] && chmod +x "$STATUSLINE_DST"
 fi
 
-# === Merge settings.json ===
-info "Merging hook config into settings.json..."
+# === Generate warden.env (hook thresholds from merged config) ===
+info "Generating warden.env..."
 
-if [[ ! -f "$TEMPLATE_FILE" ]]; then
-    error "Template not found: $TEMPLATE_FILE"
+if $DRY_RUN; then
+    dim "(dry-run) Would write warden.env to $WARDEN_ENV_DIR/"
+else
+    mkdir -p "$WARDEN_ENV_DIR"
+
+    # Generate bash env file from warden thresholds JSON
+    {
+        printf '# Generated by claude-warden install.sh - do not edit\n'
+        printf '# Profile: %s | Generated: %s\n\n' "$PROFILE" "$(date -Iseconds 2>/dev/null || date +%Y-%m-%dT%H:%M:%S)"
+
+        # Scalar thresholds
+        printf '%s' "$WARDEN_THRESHOLDS_JSON" | jq -r '
+            to_entries[] |
+            select(.value | type == "number") |
+            "export WARDEN_\(.key | ascii_upcase)=\(.value)"
+        '
+
+        echo ""
+        echo "# Subagent call limits"
+        echo "declare -A WARDEN_CALL_LIMITS=("
+        printf '%s' "$WARDEN_THRESHOLDS_JSON" | jq -r '
+            .subagent_call_limits // {} | to_entries[] |
+            "    [\"\(.key)\"]=\(.value)"
+        '
+        echo ")"
+
+        echo ""
+        echo "# Subagent byte limits"
+        echo "declare -A WARDEN_BYTE_LIMITS=("
+        printf '%s' "$WARDEN_THRESHOLDS_JSON" | jq -r '
+            .subagent_byte_limits // {} | to_entries[] |
+            "    [\"\(.key)\"]=\(.value)"
+        '
+        echo ")"
+    } > "$WARDEN_ENV_DIR/warden.env"
+
+    # Record which profile was used
+    printf '%s\n' "$PROFILE" > "$WARDEN_ENV_DIR/profile"
+
+    dim "Wrote $WARDEN_ENV_DIR/warden.env (profile: $PROFILE)"
+fi
+
+# === Merge into settings.json ===
+info "Merging configuration into settings.json..."
+
+if [[ ! -f "$HOOKS_TEMPLATE" ]]; then
+    error "Hooks template not found: $HOOKS_TEMPLATE"
     exit 1
 fi
 
+HOOKS_JSON=$(jq '.hooks' "$HOOKS_TEMPLATE")
+STATUSLINE_JSON=$(jq '.statusLine' "$HOOKS_TEMPLATE")
+
 if $DRY_RUN; then
-    dim "(dry-run) Would merge hooks and statusLine into $SETTINGS_FILE"
+    dim "(dry-run) Would merge env ($ENV_COUNT vars), permissions ($ALLOW_COUNT allow rules), hooks, and statusLine into $SETTINGS_FILE"
 else
     if [[ -f "$SETTINGS_FILE" ]]; then
-        # Merge: add/replace hooks + statusLine, preserve everything else
-        MERGED=$(jq -s '.[0] * {hooks: .[1].hooks, statusLine: .[1].statusLine}' \
-            "$SETTINGS_FILE" "$TEMPLATE_FILE")
+        # Merge into existing settings:
+        # - env: warden values added/overridden, user's non-warden keys preserved
+        # - permissions.allow: union (unique)
+        # - permissions.deny: union (unique)
+        # - hooks: replaced with warden hooks
+        # - statusLine: replaced with warden statusLine
+        # - everything else: preserved
+        MERGED=$(jq \
+            --argjson warden_env "$WARDEN_ENV_JSON" \
+            --argjson warden_allow "$WARDEN_ALLOW_JSON" \
+            --argjson warden_deny "$WARDEN_DENY_JSON" \
+            --argjson hooks "$HOOKS_JSON" \
+            --argjson statusLine "$STATUSLINE_JSON" \
+            '
+            .env = ((.env // {}) * $warden_env) |
+            .permissions.allow = (((.permissions.allow // []) + $warden_allow) | unique) |
+            .permissions.deny = (((.permissions.deny // []) + $warden_deny) | unique) |
+            .hooks = $hooks |
+            .statusLine = $statusLine
+            ' "$SETTINGS_FILE")
     else
-        # No existing settings - create from template
-        MERGED=$(jq '.' "$TEMPLATE_FILE")
+        # No existing settings - create from warden config + hooks
+        MERGED=$(jq -n \
+            --argjson warden_env "$WARDEN_ENV_JSON" \
+            --argjson warden_allow "$WARDEN_ALLOW_JSON" \
+            --argjson warden_deny "$WARDEN_DENY_JSON" \
+            --argjson hooks "$HOOKS_JSON" \
+            --argjson statusLine "$STATUSLINE_JSON" \
+            '{
+                env: $warden_env,
+                permissions: {
+                    allow: $warden_allow,
+                    deny: $warden_deny,
+                    defaultMode: "default"
+                },
+                hooks: $hooks,
+                statusLine: $statusLine
+            }')
     fi
 
-    echo "$MERGED" | jq '.' > "$SETTINGS_FILE.tmp"
+    printf '%s' "$MERGED" | jq '.' > "$SETTINGS_FILE.tmp"
     mv "$SETTINGS_FILE.tmp" "$SETTINGS_FILE"
+
+    # Count what changed
+    FINAL_ENV=$(jq '.env | length' "$SETTINGS_FILE")
+    FINAL_ALLOW=$(jq '.permissions.allow | length' "$SETTINGS_FILE")
+    dim "settings.json: $FINAL_ENV env vars, $FINAL_ALLOW allow rules"
 fi
 
-# === Validate ===
+# === Generate shell env (optional helper for .zshrc/.bashrc) ===
+if ! $DRY_RUN; then
+    SHELL_ENV_FILE="$WARDEN_DIR/warden.env.sh"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf '# Generated by claude-warden install.sh - source from .zshrc/.bashrc\n'
+        printf '# Replaces manual Claude Code env vars in your shell config.\n'
+        printf '# Profile: %s | Generated: %s\n\n' "$PROFILE" "$(date -Iseconds 2>/dev/null || date +%Y-%m-%dT%H:%M:%S)"
+
+        printf '# OTEL / Monitoring\n'
+        printf '%s' "$WARDEN_ENV_JSON" | jq -r '
+            to_entries[] |
+            select(.key | test("^(OTEL_|DO_NOT_TRACK|DISABLE_TELEMETRY|DISABLE_ERROR_REPORTING|CLAUDE_CODE_ENABLE_TELEMETRY)")) |
+            "export \(.key)=\"\(.value)\""
+        '
+
+        echo ""
+        printf '# Token / Output Limits\n'
+        printf '%s' "$WARDEN_ENV_JSON" | jq -r '
+            to_entries[] |
+            select(.key | test("^(CLAUDE_CODE_MAX_OUTPUT|CLAUDE_CODE_FILE_READ|MAX_THINKING|MAX_MCP_OUTPUT|BASH_MAX_OUTPUT|TASK_MAX_OUTPUT|DISABLE_NON_ESSENTIAL|DISABLE_COST|MCP_TIMEOUT|MCP_TOOL_TIMEOUT|CLAUDE_CODE_GLOB_TIMEOUT)")) |
+            "export \(.key)=\"\(.value)\""
+        '
+
+        echo ""
+        printf '# Sandbox / Behavior\n'
+        printf '%s' "$WARDEN_ENV_JSON" | jq -r '
+            to_entries[] |
+            select(.key | test("^(CLAUDE_CODE_BUBBLEWRAP|CLAUDE_BASH_MAINTAIN|CLAUDE_CODE_GLOB_HIDDEN)")) |
+            "export \(.key)=\"\(.value)\""
+        '
+
+        echo ""
+        printf '# Warden internal\n'
+        printf 'export WARDEN_STATE_DIR="${WARDEN_STATE_DIR:-$HOME/.claude/.statusline}"\n'
+    } > "$SHELL_ENV_FILE"
+
+    dim "Wrote $SHELL_ENV_FILE"
+fi
+
+# === Detect shell RC status (for summary) ===
+SHELL_RC_NEEDED=()
+for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
+    [[ -f "$rc" ]] || continue
+    if ! grep -qF "warden.env.sh" "$rc" 2>/dev/null; then
+        SHELL_RC_NEEDED+=("$rc")
+    fi
+done
 info "Validating..."
 ERRORS=0
 
@@ -234,10 +484,19 @@ if ! $DRY_RUN; then
         dim "settings.json: valid JSON"
     fi
 
+    # Validate warden.env
+    if [[ -f "$WARDEN_ENV_DIR/warden.env" ]]; then
+        if bash -n "$WARDEN_ENV_DIR/warden.env" 2>/dev/null; then
+            dim "warden.env: syntax OK"
+        else
+            error "warden.env: syntax error!"
+            ERRORS=$((ERRORS + 1))
+        fi
+    fi
+
     # Validate hook scripts
     for hook in "${HOOK_FILES[@]}"; do
         TARGET="$HOOKS_DIR/$hook"
-        # Resolve symlink for validation
         if [[ -L "$TARGET" ]]; then
             TARGET=$(readlink -f "$TARGET" 2>/dev/null || readlink "$TARGET")
         fi
@@ -291,7 +550,9 @@ fi
 info "Installation complete! (v$WARDEN_VERSION)"
 echo ""
 echo "  Version:    $WARDEN_VERSION"
+echo "  Profile:    $PROFILE"
 echo "  Hooks:      $HOOKS_DIR/ (${#HOOK_FILES[@]} hooks + lib, $MODE mode)"
+echo "  Config:     $WARDEN_ENV_DIR/warden.env"
 echo "  Statusline: $STATUSLINE_DST"
 echo "  Settings:   $SETTINGS_FILE"
 if [[ -n "${BACKUP_DIR:-}" ]]; then
@@ -305,4 +566,17 @@ echo "  Start a new Claude Code session to activate hooks."
 if [[ "$MODE" == "symlink" ]]; then
     echo "  Edits to $WARDEN_DIR/ take effect immediately."
     echo "  Run 'git pull' in the repo to update hooks."
+fi
+echo ""
+echo "  To change profile:  ./install.sh --profile <name>"
+echo "  To customize:       cp config/user.json.template config/user.json && edit"
+
+if (( ${#SHELL_RC_NEEDED[@]} > 0 )); then
+    echo ""
+    printf "  ${YELLOW}Add this line to your shell RC file:${RESET}\n"
+    echo ""
+    printf "    ${CYAN}# claude-warden env${RESET}\n"
+    printf "    ${CYAN}source \"%s/warden.env.sh\"${RESET}\n" "$WARDEN_DIR"
+    echo ""
+    printf "  Applies to: %s\n" "${SHELL_RC_NEEDED[*]}"
 fi

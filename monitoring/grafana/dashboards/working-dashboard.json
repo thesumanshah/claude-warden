@@ -397,6 +397,85 @@
       ],
       "title": "Subagents Over Time",
       "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "description": "Overlays warden's budget estimate (output bytes / 3.5) against actual API token usage. Use this to calibrate the bytes-per-token ratio.",
+      "fieldConfig": {
+        "defaults": { "unit": "none", "color": { "mode": "palette-classic" } },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "actual (API)" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } },
+              { "id": "custom.lineWidth", "value": 2 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "warden estimate" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } },
+              { "id": "custom.lineStyle", "value": { "dash": [10, 5], "fill": "dash" } }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 16, "x": 0, "y": 44 },
+      "id": 20,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+          "expr": "sum(claude_code_token_usage_tokens_total)",
+          "legendFormat": "actual (API)",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+          "expr": "claude_budget_consumed_tokens",
+          "legendFormat": "warden estimate",
+          "refId": "B"
+        }
+      ],
+      "title": "Estimate vs Actual Tokens",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "description": "Ratio of warden's budget estimate to actual API tokens. Values < 1 mean warden underestimates; > 1 means overestimates. Use to tune the 3.5 bytes/token ratio.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.5 },
+              { "color": "green", "value": 0.8 },
+              { "color": "yellow", "value": 1.2 },
+              { "color": "red", "value": 1.5 }
+            ]
+          },
+          "min": 0,
+          "max": 2
+        }
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 44 },
+      "id": 21,
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+          "expr": "claude_budget_consumed_tokens / clamp_min(sum(claude_code_token_usage_tokens_total), 1)",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Estimate Accuracy",
+      "type": "stat"
     }
   ],
   "refresh": "15s",

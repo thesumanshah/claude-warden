@@ -23,6 +23,9 @@ __pycache__/
 # Claude Code local settings (keep the repo clean by default)
 .claude/settings.local.json
 
+# User config overrides (created from config/user.json.template)
+config/user.json
+
 # Common editor/OS noise
 .DS_Store
 .idea/

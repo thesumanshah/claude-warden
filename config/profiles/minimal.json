@@ -1,0 +1,9 @@
+{
+  "_comment": "Hooks only. No env or permission changes. For users who manage settings.json themselves.",
+  "env": {},
+  "permissions": {
+    "allow": [],
+    "deny": []
+  },
+  "warden": {}
+}

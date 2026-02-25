@@ -38,24 +38,31 @@ fi
 
 # === SUBAGENT BUDGET ENFORCEMENT (applies to ALL tools) ===
 if [[ "$IS_SUBAGENT" == true && -n "$AGENT_ID" ]]; then
-    # Call count limits per agent type (raised: many calls are cheap Greps)
-    declare -A CALL_LIMITS=(
-        ["Explore"]=30 ["Plan"]=30 ["general-purpose"]=35
-        ["code-reviewer"]=25 ["security-auditor"]=30 ["deep-debugger"]=40
-        ["architect"]=35 ["strategist"]=35 ["nix-expert"]=35
-        ["git-ops"]=25 ["test-runner"]=30 ["refactor"]=30
-        ["Bash"]=20 ["statusline-setup"]=15 ["claude-code-guide"]=25
-    )
-    CALL_BUDGET=${CALL_LIMITS[$AGENT_TYPE]:-30}
+    # Call count limits per agent type (from warden.env or defaults)
+    # WARDEN_CALL_LIMITS is declared at file scope by warden.env (sourced in common.sh).
+    # The +x check detects whether the array was already declared; if not, use built-in defaults.
+    if [[ -z "${WARDEN_CALL_LIMITS[*]+x}" ]]; then
+        declare -A WARDEN_CALL_LIMITS=(
+            ["Explore"]=30 ["Plan"]=30 ["general-purpose"]=35
+            ["code-reviewer"]=25 ["security-auditor"]=30 ["deep-debugger"]=40
+            ["architect"]=35 ["strategist"]=35 ["nix-expert"]=35
+            ["git-ops"]=25 ["test-runner"]=30 ["refactor"]=30
+            ["Bash"]=20 ["statusline-setup"]=15 ["claude-code-guide"]=25
+        )
+    fi
+    CALL_BUDGET=${WARDEN_CALL_LIMITS[$AGENT_TYPE]:-$WARDEN_DEFAULT_CALL_LIMIT}
 
-    # Cumulative output byte limits per agent type (primary brake)
-    declare -A BYTE_LIMITS=(
-        ["Explore"]=81920 ["Plan"]=81920
-        ["general-purpose"]=122880 ["architect"]=122880 ["strategist"]=122880 ["nix-expert"]=122880
-        ["deep-debugger"]=153600
-        ["code-reviewer"]=102400 ["security-auditor"]=102400
-    )
-    BYTE_BUDGET=${BYTE_LIMITS[$AGENT_TYPE]:-102400}
+    # Cumulative output byte limits per agent type (from warden.env or defaults)
+    # Same pattern as WARDEN_CALL_LIMITS above — sourced at file scope from warden.env.
+    if [[ -z "${WARDEN_BYTE_LIMITS[*]+x}" ]]; then
+        declare -A WARDEN_BYTE_LIMITS=(
+            ["Explore"]=81920 ["Plan"]=81920
+            ["general-purpose"]=122880 ["architect"]=122880 ["strategist"]=122880 ["nix-expert"]=122880
+            ["deep-debugger"]=153600
+            ["code-reviewer"]=102400 ["security-auditor"]=102400
+        )
+    fi
+    BYTE_BUDGET=${WARDEN_BYTE_LIMITS[$AGENT_TYPE]:-$WARDEN_DEFAULT_BYTE_LIMIT}
 
     WARN_CALL_AT=$((CALL_BUDGET * 80 / 100))
     WARN_BYTE_AT=$((BYTE_BUDGET * 80 / 100))
@@ -112,16 +119,16 @@ case "$TOOL_NAME" in
     Write)
         CONTENT=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_input.content // ""' 2>/dev/null)
         FILE_PATH=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_input.file_path // ""' 2>/dev/null)
-        (( ${#CONTENT} > 102400 )) && { _warden_emit_block "write_oversize" 25000 "Write ${#CONTENT}B → $FILE_PATH"; _warden_deny "Write >${#CONTENT}B (>100KB)"; }
+        (( ${#CONTENT} > WARDEN_WRITE_MAX_BYTES )) && { _warden_emit_block "write_oversize" 25000 "Write ${#CONTENT}B → $FILE_PATH"; _warden_deny "Write >${#CONTENT}B (>$((WARDEN_WRITE_MAX_BYTES/1024))KB)"; }
         _warden_suppress_ok ;;
     Edit)
         NEW=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_input.new_string // ""' 2>/dev/null)
         FILE_PATH=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_input.file_path // ""' 2>/dev/null)
-        (( ${#NEW} > 51200 )) && { _warden_emit_block "edit_oversize" 12500 "Edit ${#NEW}B → $FILE_PATH"; _warden_deny "Edit >${#NEW}B (>50KB)"; }
+        (( ${#NEW} > WARDEN_EDIT_MAX_BYTES )) && { _warden_emit_block "edit_oversize" 12500 "Edit ${#NEW}B → $FILE_PATH"; _warden_deny "Edit >${#NEW}B (>$((WARDEN_EDIT_MAX_BYTES/1024))KB)"; }
         _warden_suppress_ok ;;
     NotebookEdit)
         NEW_SOURCE=$(printf '%s' "$WARDEN_INPUT" | jq -r '.tool_input.new_source // ""' 2>/dev/null)
-        (( ${#NEW_SOURCE} > 51200 )) && { _warden_emit_block "notebook_oversize" 12500 "NotebookEdit ${#NEW_SOURCE}B"; _warden_deny "NotebookEdit >${#NEW_SOURCE}B (>50KB)"; }
+        (( ${#NEW_SOURCE} > WARDEN_NOTEBOOK_MAX_BYTES )) && { _warden_emit_block "notebook_oversize" 12500 "NotebookEdit ${#NEW_SOURCE}B"; _warden_deny "NotebookEdit >${#NEW_SOURCE}B (>$((WARDEN_NOTEBOOK_MAX_BYTES/1024))KB)"; }
         _warden_suppress_ok ;;
     Glob)
         read -r PATTERN GLOB_PATH < <(printf '%s' "$WARDEN_INPUT" | jq -r '[.tool_input.pattern // "", .tool_input.path // ""] | @tsv' 2>/dev/null)

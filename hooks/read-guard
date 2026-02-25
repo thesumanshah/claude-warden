@@ -11,8 +11,8 @@ set -euo pipefail
 # Source shared library
 source "${BASH_SOURCE[0]%/*}/lib/common.sh"
 
-# Config
-MAX_SIZE_MB=2
+# Config (from warden.env via common.sh, or fallback)
+MAX_SIZE_MB=${WARDEN_READ_GUARD_MAX_MB:-2}
 MAX_SIZE_BYTES=$((MAX_SIZE_MB * 1024 * 1024))
 
 _warden_read_input || exit 0

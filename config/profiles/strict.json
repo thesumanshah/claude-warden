@@ -1,0 +1,83 @@
+{
+  "_comment": "Aggressive token saving. Tighter limits, fewer pre-approved tools, smaller subagent budgets.",
+  "env": {
+    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "16000",
+    "CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS": "12000",
+    "MAX_THINKING_TOKENS": "16000",
+    "MAX_MCP_OUTPUT_TOKENS": "10000",
+    "BASH_MAX_OUTPUT_LENGTH": "15000",
+    "TASK_MAX_OUTPUT_LENGTH": "15000",
+    "DISABLE_NON_ESSENTIAL_MODEL_CALLS": "1",
+    "DISABLE_COST_WARNINGS": "1",
+    "MCP_TIMEOUT": "30000",
+    "MCP_TOOL_TIMEOUT": "30000",
+    "CLAUDE_CODE_GLOB_TIMEOUT_SECONDS": "5",
+    "CLAUDE_CODE_BUBBLEWRAP": "1",
+    "CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR": "1",
+    "CLAUDE_CODE_GLOB_HIDDEN": "0"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(rg:*)",
+      "Bash(fd:*)",
+      "Bash(tree:*)",
+      "Bash(file:*)",
+      "Bash(stat:*)",
+      "Bash(wc:*)",
+      "Bash(jq:*)",
+      "Bash(pwd:*)",
+      "Bash(which:*)",
+      "Bash(realpath:*)",
+      "Bash(diff:*)",
+      "Bash(sha256sum:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git branch:*)",
+      "Bash(git show:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git ls-files:*)"
+    ],
+    "deny": []
+  },
+  "warden": {
+    "truncate_bytes": 10240,
+    "subagent_read_bytes": 6144,
+    "suppress_bytes": 262144,
+    "read_guard_max_mb": 1,
+    "write_max_bytes": 51200,
+    "edit_max_bytes": 25600,
+    "notebook_max_bytes": 25600,
+    "budget_total": 180000,
+    "default_call_limit": 20,
+    "default_byte_limit": 61440,
+    "subagent_call_limits": {
+      "Explore": 20,
+      "Plan": 20,
+      "general-purpose": 25,
+      "code-reviewer": 15,
+      "security-auditor": 20,
+      "deep-debugger": 25,
+      "architect": 25,
+      "strategist": 25,
+      "nix-expert": 25,
+      "git-ops": 15,
+      "test-runner": 20,
+      "refactor": 20,
+      "Bash": 12,
+      "statusline-setup": 10,
+      "claude-code-guide": 15
+    },
+    "subagent_byte_limits": {
+      "Explore": 51200,
+      "Plan": 51200,
+      "general-purpose": 81920,
+      "architect": 81920,
+      "strategist": 81920,
+      "nix-expert": 81920,
+      "deep-debugger": 102400,
+      "code-reviewer": 61440,
+      "security-auditor": 61440
+    }
+  }
+}

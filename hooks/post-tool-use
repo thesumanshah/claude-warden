@@ -79,9 +79,9 @@ if [[ -n "$WARDEN_SESSION_ID" ]]; then
     printf '%s|%s|%s|%s\n' "$NEW_COUNT" "$TOP_BYTES" "$TOP_LABEL" "$(date +%s)" > "$STATE_FILE"
 
     # Budget check every 50 calls (infrequent, fine to be slow)
-    if (( NEW_COUNT % 50 == 0 )) && command -v budget-cli &>/dev/null; then
+    if (( NEW_COUNT % 50 == 0 )); then
         ALERT_FILE="$WARDEN_STATE_DIR/budget-alert"
-        UTIL=$(budget-cli export 2>/dev/null | jq -r '.utilization // 0' | cut -d. -f1)
+        UTIL=$(_warden_budget_export 2>/dev/null | jq -r '.utilization // 0' | cut -d. -f1)
         if [[ "$UTIL" =~ ^[0-9]+$ ]] && (( UTIL >= 90 )); then
             echo "CRITICAL|$UTIL|$(date +%s)" > "$ALERT_FILE"
             _warden_notify critical "Claude Budget" "${UTIL}%!"
@@ -153,6 +153,7 @@ if (( OUTPUT_SIZE > 50 )); then
             if (( _STRIPPED > 0 )); then
                 _EMIT_ORIG_TEXT="$_RAW" _EMIT_FINAL_TEXT="$_CLEANED" \
                 _warden_emit_event "truncated" "$OUTPUT_SIZE" "$_CLEANED_SIZE" "system_reminder"
+                _warden_fire_token_count "$_RAW" "$_CLEANED" "$(( _STRIPPED * 10 / 35 ))" "system_reminder"
                 case "$TOOL_NAME" in
                     Bash|Grep|Glob|Task)
                         # Pre-clean for downstream truncation logic
@@ -215,6 +216,7 @@ if [[ "$TOOL_NAME" == "Task" ]] && (( OUTPUT_SIZE > 6144 )); then
         if (( STRUCT_SIZE > 200 && STRUCT_SIZE < OUTPUT_SIZE )); then
             _EMIT_ORIG_TEXT="$OUTPUT" _EMIT_FINAL_TEXT="$STRUCTURED" \
             _warden_emit_event "truncated" "$OUTPUT_SIZE" "$STRUCT_SIZE" "task_structured"
+            _warden_fire_token_count "$OUTPUT" "$STRUCTURED" "$(( (OUTPUT_SIZE - STRUCT_SIZE) * 10 / 35 ))" "task_structured"
             jq -n --arg text "${STRUCTURED}
 
 [Agent output compressed: $((OUTPUT_SIZE/1024))KB -> $((STRUCT_SIZE/1024))KB structured lines]" \
@@ -248,6 +250,7 @@ fi
 # od + grep is POSIX-compliant and works on macOS/Linux/BSD
 if printf '%s' "$WARDEN_INPUT" | jq -r '.tool_response.content[0].text // ""' 2>/dev/null | od -An -tx1 | grep -q ' 00'; then
     _warden_emit_event "truncated" "$OUTPUT_SIZE" 50 "binary_output"
+    _warden_fire_token_count "$OUTPUT" "" "$(( (OUTPUT_SIZE - 50) * 10 / 35 ))" "binary_output"
     jq -n --arg text "[Binary output: $((OUTPUT_SIZE/1024))KB. Use 'file' or redirect.]" '{"modifyOutput":$text}'
     exit 0
 fi
@@ -255,6 +258,7 @@ fi
 # >500KB: suppress entirely
 if (( OUTPUT_SIZE > WARDEN_SUPPRESS_BYTES )); then
     _warden_emit_event "truncated" "$OUTPUT_SIZE" 60 "output_suppressed"
+    _warden_fire_token_count "$OUTPUT" "" "$(( (OUTPUT_SIZE - 60) * 10 / 35 ))" "output_suppressed"
     jq -n --arg text "[Output too large: $((OUTPUT_SIZE/1048576))MB. Use | head or redirect.]" '{"modifyOutput":$text}'
     exit 0
 fi
@@ -264,6 +268,7 @@ HEAD="${OUTPUT:0:8000}"
 TAIL="${OUTPUT: -2000}"
 _EMIT_ORIG_TEXT="$OUTPUT" _EMIT_FINAL_TEXT="${HEAD}${TAIL}" \
 _warden_emit_event "truncated" "$OUTPUT_SIZE" 10000 "output_truncated"
+_warden_fire_token_count "$OUTPUT" "${HEAD}${TAIL}" "$(( (OUTPUT_SIZE - 10000) * 10 / 35 ))" "output_truncated"
 jq -n --arg text "${HEAD}
 ... [$((OUTPUT_SIZE/1024))KB truncated to 10KB] ...
 ${TAIL}" '{"modifyOutput":$text}'

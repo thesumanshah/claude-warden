@@ -11,6 +11,7 @@ CLAUDE_DIR="$HOME/.claude"
 HOOKS_DIR="$CLAUDE_DIR/hooks"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 STATUSLINE_FILE="$CLAUDE_DIR/statusline.sh"
+WARDEN_ENV_DIR="$CLAUDE_DIR/.warden"
 
 DRY_RUN=false
 
@@ -61,6 +62,7 @@ HOOK_FILES=(
     subagent-start
     subagent-stop
     tool-error
+    pre-compact
 )
 
 # === Remove hooks ===
@@ -89,6 +91,24 @@ if [[ -e "$STATUSLINE_FILE" ]] || [[ -L "$STATUSLINE_FILE" ]]; then
     info "Removing statusline..."
     run rm -f "$STATUSLINE_FILE"
     dim "Removed: statusline.sh"
+fi
+
+# === Remove warden config ===
+if [[ -d "$WARDEN_ENV_DIR" ]]; then
+    info "Removing warden config..."
+    run rm -rf "$WARDEN_ENV_DIR"
+    dim "Removed: .warden/ (including budget state)"
+fi
+
+# === Check for shell RC source lines ===
+RC_HAS_WARDEN=()
+for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
+    [[ -f "$rc" ]] || continue
+    grep -qF "warden.env.sh" "$rc" 2>/dev/null && RC_HAS_WARDEN+=("$rc")
+done
+if (( ${#RC_HAS_WARDEN[@]} > 0 )); then
+    warn "Remove the warden source line from: ${RC_HAS_WARDEN[*]}"
+    dim "Look for: source \"...warden.env.sh\""
 fi
 
 # === Restore settings.json ===

@@ -1,0 +1,13 @@
+{
+  "_comment": "User overrides. Copy to config/user.json and edit. Merged on top of defaults + profile.",
+  "env": {
+  },
+  "permissions": {
+    "allow": [
+    ],
+    "deny": [
+    ]
+  },
+  "warden": {
+  }
+}
