@@ -11,6 +11,7 @@ CLAUDE_DIR="$HOME/.claude"
 HOOKS_DIR="$CLAUDE_DIR/hooks"
 SETTINGS_FILE="$CLAUDE_DIR/settings.json"
 STATUSLINE_FILE="$CLAUDE_DIR/statusline.sh"
+WARDEN_ENV_DIR="$CLAUDE_DIR/.warden"
 
 DRY_RUN=false
 
@@ -61,6 +62,7 @@ HOOK_FILES=(
     subagent-start
     subagent-stop
     tool-error
+    pre-compact
 )
 
 # === Remove hooks ===
@@ -89,6 +91,13 @@ if [[ -e "$STATUSLINE_FILE" ]] || [[ -L "$STATUSLINE_FILE" ]]; then
     info "Removing statusline..."
     run rm -f "$STATUSLINE_FILE"
     dim "Removed: statusline.sh"
+fi
+
+# === Remove warden config ===
+if [[ -d "$WARDEN_ENV_DIR" ]]; then
+    info "Removing warden config..."
+    run rm -rf "$WARDEN_ENV_DIR"
+    dim "Removed: .warden/"
 fi
 
 # === Restore settings.json ===

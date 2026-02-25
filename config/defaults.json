@@ -1,0 +1,58 @@
+{
+  "_comment": "Warden baseline config. Profiles override these values.",
+  "env": {
+    "OTEL_METRICS_EXPORTER": "otlp",
+    "OTEL_LOGS_EXPORTER": "otlp",
+    "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
+    "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4317",
+    "OTEL_METRIC_EXPORT_INTERVAL": "60000",
+    "OTEL_LOGS_EXPORT_INTERVAL": "50000",
+    "OTEL_LOG_TOOL_DETAILS": "1",
+    "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+    "DISABLE_TELEMETRY": "0",
+    "DISABLE_ERROR_REPORTING": "1"
+  },
+  "permissions": {
+    "allow": [],
+    "deny": []
+  },
+  "warden": {
+    "truncate_bytes": 20480,
+    "subagent_read_bytes": 10240,
+    "suppress_bytes": 524288,
+    "read_guard_max_mb": 2,
+    "write_max_bytes": 102400,
+    "edit_max_bytes": 51200,
+    "notebook_max_bytes": 51200,
+    "default_call_limit": 30,
+    "default_byte_limit": 102400,
+    "subagent_call_limits": {
+      "Explore": 30,
+      "Plan": 30,
+      "general-purpose": 35,
+      "code-reviewer": 25,
+      "security-auditor": 30,
+      "deep-debugger": 40,
+      "architect": 35,
+      "strategist": 35,
+      "nix-expert": 35,
+      "git-ops": 25,
+      "test-runner": 30,
+      "refactor": 30,
+      "Bash": 20,
+      "statusline-setup": 15,
+      "claude-code-guide": 25
+    },
+    "subagent_byte_limits": {
+      "Explore": 81920,
+      "Plan": 81920,
+      "general-purpose": 122880,
+      "architect": 122880,
+      "strategist": 122880,
+      "nix-expert": 122880,
+      "deep-debugger": 153600,
+      "code-reviewer": 102400,
+      "security-auditor": 102400
+    }
+  }
+}
