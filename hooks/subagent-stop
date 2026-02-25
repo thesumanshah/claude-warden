@@ -17,38 +17,15 @@ AGENT_ID=$(_warden_sanitize_id "$AGENT_ID")
 SESSION_ID=$(_warden_sanitize_id "$SESSION_ID")
 [[ -z "$AGENT_ID" ]] && AGENT_ID="unknown"
 
-# Cross-platform file locking (mkdir is atomic on all POSIX systems)
-_with_lock() {
-    local lockfile="$1"; shift
-    local max_wait=50  # 50 * 10ms = 500ms max
-    local i=0
-    # Break stale locks older than 5 seconds
-    if [[ -d "$lockfile" ]]; then
-        local lock_age
-        lock_age=$(( $(date +%s) - $(stat -c %Y "$lockfile" 2>/dev/null || stat -f %m "$lockfile" 2>/dev/null || date +%s) ))
-        (( lock_age > 5 )) && rmdir "$lockfile" 2>/dev/null || true
-    fi
-    while ! mkdir "$lockfile" 2>/dev/null; do
-        i=$((i + 1))
-        (( i >= max_wait )) && break
-        sleep 0.01
-    done
-    # Ensure lock is cleaned up even if protected operation fails
-    local _lock_rc=0
-    "$@" || _lock_rc=$?
-    rmdir "$lockfile" 2>/dev/null || true
-    return $_lock_rc
-}
-
 # === BUDGET TRACKING ===
-# Estimate token usage from duration (~100 tokens/sec)
-START_FILE="$WARDEN_SUBAGENT_STATE_DIR/$AGENT_ID.start"
-if [[ -f "$START_FILE" ]]; then
-  _START_TIME=$(cat "$START_FILE")
-  _END_TIME=$(date +%s)
-  _DURATION=$((_END_TIME - _START_TIME))
-  if (( _DURATION > 0 )); then
-    _warden_budget_update $((_DURATION * 100))
+# Use actual cumulative output bytes tracked by post-tool-use (~3.5 bytes/token)
+BYTE_FILE="$WARDEN_SUBAGENT_STATE_DIR/$AGENT_ID.bytes"
+if [[ -f "$BYTE_FILE" ]]; then
+  _RAW=$(cat "$BYTE_FILE" 2>/dev/null || echo "0")
+  _TOTAL_BYTES="${_RAW%%|*}"
+  [[ "$_TOTAL_BYTES" =~ ^[0-9]+$ ]] || _TOTAL_BYTES=0
+  if (( _TOTAL_BYTES > 0 )); then
+    _warden_budget_update $(( _TOTAL_BYTES * 10 / 35 ))
   fi
 fi
 
@@ -86,7 +63,7 @@ if [ -n "$SESSION_ID" ] && [ -f "$SUBAGENT_COUNT_FILE" ]; then
       printf '%s|%s|%s\n' "$SESSION_ID" "$PREV_COUNT" "$(date +%s)" > "$SUBAGENT_COUNT_FILE"
     fi
   }
-  _with_lock "$WARDEN_STATE_DIR/subagent-count.lock.d" _decrement_count
+  _warden_with_lock "$WARDEN_STATE_DIR/subagent-count.lock.d" _decrement_count
 fi
 
 # NOTE: NO immediate cleanup - state files retained for debugging

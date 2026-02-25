@@ -61,6 +61,12 @@ for arg in "$@"; do
     esac
 done
 
+# Validate --profile was given a value if the flag was used
+if [[ "${_NEXT_IS_PROFILE:-}" == true ]]; then
+    echo "Error: --profile requires a value (minimal, standard, strict)" >&2
+    exit 1
+fi
+
 # === Colors ===
 RED='\033[31m'
 GREEN='\033[32m'

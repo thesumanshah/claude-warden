@@ -97,7 +97,7 @@ fi
 if [[ -d "$WARDEN_ENV_DIR" ]]; then
     info "Removing warden config..."
     run rm -rf "$WARDEN_ENV_DIR"
-    dim "Removed: .warden/"
+    dim "Removed: .warden/ (including budget state)"
 fi
 
 # === Check for shell RC source lines ===

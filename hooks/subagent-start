@@ -20,29 +20,6 @@ SESSION_ID=$(_warden_sanitize_id "$SESSION_ID")
 mkdir -p "$WARDEN_SUBAGENT_STATE_DIR" "$WARDEN_STATE_DIR"
 EPOCH=$(date +%s)
 
-# Cross-platform file locking (mkdir is atomic on all POSIX systems)
-_with_lock() {
-    local lockfile="$1"; shift
-    local max_wait=50  # 50 * 10ms = 500ms max
-    local i=0
-    # Break stale locks older than 5 seconds
-    if [[ -d "$lockfile" ]]; then
-        local lock_age
-        lock_age=$(( $(date +%s) - $(stat -c %Y "$lockfile" 2>/dev/null || stat -f %m "$lockfile" 2>/dev/null || date +%s) ))
-        (( lock_age > 5 )) && rmdir "$lockfile" 2>/dev/null || true
-    fi
-    while ! mkdir "$lockfile" 2>/dev/null; do
-        i=$((i + 1))
-        (( i >= max_wait )) && break
-        sleep 0.01
-    done
-    # Ensure lock is cleaned up even if protected operation fails
-    local _lock_rc=0
-    "$@" || _lock_rc=$?
-    rmdir "$lockfile" 2>/dev/null || true
-    return $_lock_rc
-}
-
 # === BUDGET ENFORCEMENT ===
 if ! _warden_budget_check; then
   STATS=$(_warden_budget_export)
@@ -104,7 +81,7 @@ if [ -n "$SESSION_ID" ]; then
     [[ "$PREV_COUNT" =~ ^[0-9]+$ ]] || PREV_COUNT=0
     printf '%s|%s|%s\n' "$SESSION_ID" "$((PREV_COUNT + 1))" "$EPOCH" > "$SUBAGENT_COUNT_FILE"
   }
-  _with_lock "$WARDEN_STATE_DIR/subagent-count.lock.d" _increment_count
+  _warden_with_lock "$WARDEN_STATE_DIR/subagent-count.lock.d" _increment_count
 fi
 
 # Inject type-specific guidance for all agent types

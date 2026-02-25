@@ -39,6 +39,8 @@ fi
 # === SUBAGENT BUDGET ENFORCEMENT (applies to ALL tools) ===
 if [[ "$IS_SUBAGENT" == true && -n "$AGENT_ID" ]]; then
     # Call count limits per agent type (from warden.env or defaults)
+    # WARDEN_CALL_LIMITS is declared at file scope by warden.env (sourced in common.sh).
+    # The +x check detects whether the array was already declared; if not, use built-in defaults.
     if [[ -z "${WARDEN_CALL_LIMITS[*]+x}" ]]; then
         declare -A WARDEN_CALL_LIMITS=(
             ["Explore"]=30 ["Plan"]=30 ["general-purpose"]=35
@@ -51,6 +53,7 @@ if [[ "$IS_SUBAGENT" == true && -n "$AGENT_ID" ]]; then
     CALL_BUDGET=${WARDEN_CALL_LIMITS[$AGENT_TYPE]:-$WARDEN_DEFAULT_CALL_LIMIT}
 
     # Cumulative output byte limits per agent type (from warden.env or defaults)
+    # Same pattern as WARDEN_CALL_LIMITS above — sourced at file scope from warden.env.
     if [[ -z "${WARDEN_BYTE_LIMITS[*]+x}" ]]; then
         declare -A WARDEN_BYTE_LIMITS=(
             ["Explore"]=81920 ["Plan"]=81920

@@ -106,14 +106,47 @@ export WARDEN_DEFAULT_CALL_LIMIT=${WARDEN_DEFAULT_CALL_LIMIT:-30}
 export WARDEN_DEFAULT_BYTE_LIMIT=${WARDEN_DEFAULT_BYTE_LIMIT:-102400}
 export WARDEN_BUDGET_TOTAL=${WARDEN_BUDGET_TOTAL:-280000}
 
+# Hooks directory (derived from this file's location: lib/../)
+WARDEN_HOOKS_DIR="${BASH_SOURCE[0]%/*}/.."
+
+# ==============================================================================
+# FILE LOCKING (shared across hooks)
+# ==============================================================================
+# Cross-platform file locking using mkdir (atomic on all POSIX systems)
+# Usage: _warden_with_lock LOCKDIR_PATH COMMAND [ARGS...]
+_warden_with_lock() {
+    local lockfile="$1"; shift
+    local max_wait=50  # 50 * 10ms = 500ms max
+    local i=0
+    # Break stale locks older than 5 seconds
+    if [[ -d "$lockfile" ]]; then
+        local lock_age
+        lock_age=$(( $(date +%s) - $(stat -c %Y "$lockfile" 2>/dev/null || stat -f %m "$lockfile" 2>/dev/null || date +%s) ))
+        (( lock_age > 5 )) && rmdir "$lockfile" 2>/dev/null || true
+    fi
+    while ! mkdir "$lockfile" 2>/dev/null; do
+        i=$((i + 1))
+        (( i >= max_wait )) && break
+        sleep 0.01
+    done
+    local _lock_rc=0
+    "$@" || _lock_rc=$?
+    rmdir "$lockfile" 2>/dev/null || true
+    return $_lock_rc
+}
+
 # ==============================================================================
 # BUILT-IN BUDGET TRACKER
 # ==============================================================================
 # Replaces external budget-cli. Tracks estimated token consumption per session.
 # State: single file with consumed count. Total from WARDEN_BUDGET_TOTAL.
+# Token estimates use actual output bytes at ~3.5 bytes/token (same ratio as
+# _warden_emit_event and Grafana dashboards). For exact API token counts, enable
+# WARDEN_TOKEN_COUNT=api (see README).
 
 WARDEN_BUDGET_STATE="${HOME}/.claude/.warden/budget.state"
 WARDEN_BUDGET_CACHE="$WARDEN_STATE_DIR/budget-export"
+WARDEN_BUDGET_LOCK="$WARDEN_STATE_DIR/budget.lock.d"
 
 # Read consumed tokens from state file (returns number on stdout)
 _warden_budget_read() {
@@ -129,15 +162,18 @@ _warden_budget_write() {
     printf '%d' "$1" > "$WARDEN_BUDGET_STATE"
 }
 
-# Add tokens to consumed counter
+# Add tokens to consumed counter (locked to prevent concurrent read-modify-write races)
 _warden_budget_update() {
     local tokens="${1:-0}"
     [[ "$tokens" =~ ^[0-9]+$ ]] || return 0
     (( tokens == 0 )) && return 0
-    local consumed
-    consumed=$(_warden_budget_read)
-    consumed=$((consumed + tokens))
-    _warden_budget_write "$consumed"
+    _warden_budget_update_inner() {
+        local consumed
+        consumed=$(_warden_budget_read)
+        consumed=$((consumed + tokens))
+        _warden_budget_write "$consumed"
+    }
+    _warden_with_lock "$WARDEN_BUDGET_LOCK" _warden_budget_update_inner
 }
 
 # Check if budget is available (exit 0 = ok, exit 1 = exhausted)
@@ -166,6 +202,34 @@ _warden_budget_export() {
 # Reset budget counter (called at session start)
 _warden_budget_reset() {
     _warden_budget_write 0
+}
+
+# ==============================================================================
+# EXACT TOKEN COUNTING (background, fire-and-forget)
+# ==============================================================================
+# When WARDEN_TOKEN_COUNT=api, spawn _token-count-bg to get exact counts from the
+# Anthropic token counting API. Writes correction events to events.jsonl.
+# Zero added hook latency: runs in background with & disown.
+# Requires: python3 with anthropic package, ANTHROPIC_API_KEY set by Claude Code.
+
+_warden_fire_token_count() {
+    local orig_text="$1" final_text="$2" estimated="$3" rule="$4"
+    [[ "${WARDEN_TOKEN_COUNT:-}" != "api" ]] && return
+    local python="${WARDEN_PYTHON:-python3}"
+    local script="$WARDEN_HOOKS_DIR/_token-count-bg"
+    command -v "$python" &>/dev/null || return
+    [[ -x "$script" ]] || return
+
+    local tmpdir
+    tmpdir=$(mktemp -d "/tmp/warden-tc.XXXXXX") || return
+    printf '%s' "$orig_text" > "$tmpdir/orig"
+    printf '%s' "$final_text" > "$tmpdir/final"
+
+    local ts=$((_WARDEN_NOW_S - _WARDEN_SESSION_START_S))
+    "$python" "$script" \
+        "$ts" "${WARDEN_TOOL_NAME:-unknown}" "${WARDEN_COMMAND:0:200}" "$estimated" "$rule" \
+        "$WARDEN_EVENTS_FILE" "$tmpdir/orig" "$tmpdir/final" &
+    disown
 }
 
 # ==============================================================================

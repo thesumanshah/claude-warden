@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# session-lifecycle: Unified session start/end tracking (merged from session-start + session-end)
-# Dispatches on hook_event_name field
+# session-lifecycle: DEPRECATED — not registered in settings.hooks.json.
+# The separate session-start and session-end hooks are the active implementations.
+# This file is kept for backward compatibility with older installs that may reference it.
+# Dispatches on hook_event_name field.
 set -euo pipefail
 
 # Source shared library
