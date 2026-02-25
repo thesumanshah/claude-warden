@@ -458,37 +458,13 @@ if ! $DRY_RUN; then
     dim "Wrote $SHELL_ENV_FILE"
 fi
 
-# === Inject source line into shell RC files ===
-WARDEN_SOURCE_LINE="source \"$WARDEN_DIR/warden.env.sh\""
-WARDEN_MARKER="# claude-warden env"
-
-_inject_shell_rc() {
-    local rc_file="$1"
-    local rc_name
-    rc_name=$(basename "$rc_file")
-
-    if [[ ! -f "$rc_file" ]]; then
-        return
-    fi
-
-    # Already present — skip
-    if grep -qF "claude-warden" "$rc_file" 2>/dev/null; then
-        dim "$rc_name: warden source line already present"
-        return
-    fi
-
-    if $DRY_RUN; then
-        dim "(dry-run) Would append source line to $rc_file"
-        return
-    fi
-
-    # Append with marker comment
-    printf '\n%s\n%s\n' "$WARDEN_MARKER" "$WARDEN_SOURCE_LINE" >> "$rc_file"
-    info "Added warden env to $rc_name"
-}
-
+# === Detect shell RC status (for summary) ===
+SHELL_RC_NEEDED=()
 for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
-    _inject_shell_rc "$rc"
+    [[ -f "$rc" ]] || continue
+    if ! grep -qF "warden.env.sh" "$rc" 2>/dev/null; then
+        SHELL_RC_NEEDED+=("$rc")
+    fi
 done
 info "Validating..."
 ERRORS=0
@@ -588,3 +564,13 @@ fi
 echo ""
 echo "  To change profile:  ./install.sh --profile <name>"
 echo "  To customize:       cp config/user.json.template config/user.json && edit"
+
+if (( ${#SHELL_RC_NEEDED[@]} > 0 )); then
+    echo ""
+    printf "  ${YELLOW}Add this line to your shell RC file:${RESET}\n"
+    echo ""
+    printf "    ${CYAN}# claude-warden env${RESET}\n"
+    printf "    ${CYAN}source \"%s/warden.env.sh\"${RESET}\n" "$WARDEN_DIR"
+    echo ""
+    printf "  Applies to: %s\n" "${SHELL_RC_NEEDED[*]}"
+fi

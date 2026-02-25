@@ -160,7 +160,7 @@ Merge order: `config/defaults.json` &larr; profile &larr; `config/user.json` &la
   <dt><strong>Install hooks</strong></dt>
   <dd>Symlinks (or copies) 12 hook scripts + <code>lib/</code> + <code>statusline.sh</code> into <code>~/.claude/</code>. Sets executable permissions.</dd>
   <dt><strong>Apply configuration</strong></dt>
-  <dd>Generates <code>~/.claude/.warden/warden.env</code> (hook thresholds). Merges env vars and permissions into <code>settings.json</code> (union for permissions, preserves plugins/model/etc). Generates <code>warden.env.sh</code> and sources it from <code>.zshrc</code>/<code>.bashrc</code>.</dd>
+  <dd>Generates <code>~/.claude/.warden/warden.env</code> (hook thresholds). Merges env vars and permissions into <code>settings.json</code> (union for permissions, preserves plugins/model/etc). Generates <code>warden.env.sh</code> for shell sourcing.</dd>
   <dt><strong>Validate</strong></dt>
   <dd>Checks JSON validity and shell syntax for every installed script.</dd>
 </dl>
@@ -197,11 +197,16 @@ Token limits and tool permissions are set in the `env` and `permissions` section
 
 ### ![terminal][icon-terminal] Shell environment
 
-The installer generates `warden.env.sh` and automatically adds a `source` line to `~/.zshrc` and/or `~/.bashrc` (whichever exist). This exports <abbr title="OpenTelemetry">OTEL</abbr>, token limit, timeout, and sandbox vars from your chosen profile into every new shell.
+The installer generates `warden.env.sh` and prints the line to add to your shell RC. Add it to `~/.zshrc`, `~/.bashrc`, or both:
 
-Re-running `install.sh` regenerates `warden.env.sh` with the current profile&rsquo;s values. The source line is only added once (idempotent). `uninstall.sh` removes it.
+```bash
+# claude-warden env
+source "$HOME/dev/claude-warden/warden.env.sh"
+```
 
-If you have existing Claude Code env vars in your shell RC, you can remove them after installing &mdash; warden now manages those values.
+This exports <abbr title="OpenTelemetry">OTEL</abbr>, token limit, timeout, and sandbox vars from your chosen profile into every new shell. Re-running `install.sh` regenerates `warden.env.sh` with the current profile&rsquo;s values.
+
+If you have existing Claude Code env vars in your shell RC, you can remove them after adding the source line &mdash; warden now manages those values.
 
 ### ![chart][icon-chart] Token savings accounting
 
