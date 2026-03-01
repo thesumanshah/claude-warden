@@ -91,7 +91,7 @@ info "Version: $VERSION"
 # === Download tarball ===
 WARDEN_TMPDIR=$(mktemp -d) || { error "Failed to create temporary directory."; exit 1; }
 TARBALL="$WARDEN_TMPDIR/claude-warden-${VERSION}.tar.gz"
-TARBALL_URL="https://github.com/$REPO/releases/download/$VERSION/claude-warden-${VERSION}.tar.gz"
+TARBALL_URL="https://github.com/$REPO/archive/refs/tags/$VERSION/${VERSION}.tar.gz"
 
 info "Downloading $TARBALL_URL"
 fetch_to "$TARBALL_URL" "$TARBALL"
